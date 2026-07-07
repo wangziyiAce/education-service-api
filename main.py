@@ -6,14 +6,19 @@
 
 def print_hi(name):
     # 在下面的代码行中使用断点来调试脚本。
-    print(f'Hi 百霖123, {name}')  # 按 Ctrl+F8 切换断点。
+    print(f'Hi 百霖123456, {name}')  # 按 Ctrl+F8 切换断点。
 
-def print_hi(name):
+def print_thi(name):
     # 在下面的代码行中使用断点来调试脚本。
     print(f'Hi 铁昭321, {name}')  # 按 Ctrl+F8 切换断点。
+
+def print_hello(name):
+    # 在下面的代码行中使用断点来调试脚本。
+    print(f'Hello 靓仔, {name}')
 
 # 按装订区域中的绿色按钮以运行脚本。
 if __name__ == '__main__':
     print_hi('PyCharm')
+    print_hello('靓仔')
 
 # 访问 https://www.jetbrains.com/help/pycharm/ 获取 PyCharm 帮助
