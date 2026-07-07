@@ -13,7 +13,7 @@ def print_hi(name):
     print(f'Hi 铁昭123, {name}')  # 按 Ctrl+F8 切换断点。
 def print_hi(name):
     # 在下面的代码行中使用断点来调试脚本。
-    print(f'Hi 王梓逸123, {name}')
+    print(f'Hi 王梓逸333, {name}')
 
 def print_hello(name):
     # 在下面的代码行中使用断点来调试脚本。
