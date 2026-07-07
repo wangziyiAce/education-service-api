@@ -17,11 +17,11 @@ def print_hi(name):
 
 def print_hello(name):
     # 在下面的代码行中使用断点来调试脚本。
-    print(f'Hello 靓仔, {name}')
+    print(f'Hello 侯畅, {name}')
 
 # 按装订区域中的绿色按钮以运行脚本。
 if __name__ == '__main__':
     print_hi('PyCharm')
-    print_hello('靓仔')
+    print_hello('PyCharm')
 
 # 访问 https://www.jetbrains.com/help/pycharm/ 获取 PyCharm 帮助
