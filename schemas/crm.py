@@ -1,0 +1,156 @@
+"""
+意向客户 & 跟进记录 - Pydantic Schema
+员工日报 - Pydantic Schema
+"""
+from __future__ import annotations
+
+from typing import Literal, Optional, List
+from datetime import date, datetime
+from pydantic import BaseModel, Field
+
+
+# ==================== 意向客户 ====================
+
+class LeadCreate(BaseModel):
+    """新增意向客户"""
+    customer_name: str = Field(..., max_length=100, examples=["李四"])
+    contact_info: str = Field(..., max_length=50, examples=["139xxxx0002"])
+    gender: Optional[str] = Field(None, max_length=10, examples=["M"])
+    age: Optional[int] = Field(None, examples=[25])
+    education_level: Optional[str] = Field(None, examples=["本科"])
+    intended_country: Optional[str] = Field(None, examples=["英国,美国"])
+    intended_major: Optional[str] = Field(None, examples=["计算机科学"])
+    source_channel: Optional[str] = Field(None, examples=["线上"])
+    background_info: Optional[str] = Field(None, examples=["对UCL计算机硕士感兴趣，GPA 3.5"])
+    remark: Optional[str] = Field(None, examples=["高意向客户，需尽快跟进"])
+    owner_employee_id: Optional[int] = Field(None, examples=[2])
+
+
+class LeadUpdate(BaseModel):
+    """更新意向客户信息（部分更新）"""
+    customer_name: Optional[str] = None
+    contact_info: Optional[str] = None
+    gender: Optional[str] = None
+    age: Optional[int] = None
+    education_level: Optional[str] = None
+    intended_country: Optional[str] = None
+    intended_major: Optional[str] = None
+    source_channel: Optional[str] = None
+    background_info: Optional[str] = None
+    remark: Optional[str] = None
+    owner_employee_id: Optional[int] = None
+
+
+class LeadStatusUpdate(BaseModel):
+    """更新客户状态"""
+    status: Literal["new", "contacting", "qualified", "signed", "lost"] = Field(
+        ..., description="客户状态：new(新)/contacting(跟进中)/qualified(已确认)/signed(已签约)/lost(已流失)",
+        examples=["contacting"])
+    lost_reason: Optional[str] = Field(None, max_length=255, description="仅 lost 时填写",
+                                       examples=["价格太高"])
+
+
+class LeadResponse(BaseModel):
+    """客户响应模型"""
+    id: int
+    customer_name: str
+    contact_info: str
+    gender: Optional[str] = None
+    age: Optional[int] = None
+    education_level: Optional[str] = None
+    intended_country: Optional[str] = None
+    intended_major: Optional[str] = None
+    source_channel: Optional[str] = None
+    background_info: Optional[str] = None
+    remark: Optional[str] = None
+    status: str
+    lost_reason: Optional[str] = None
+    owner_employee_id: Optional[int] = None
+    owner_name: Optional[str] = None
+    last_contact_time: Optional[datetime] = None
+    create_time: Optional[datetime] = None
+    update_time: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class LeadListResponse(BaseModel):
+    """客户列表响应（含分页）"""
+    items: List[LeadResponse]
+    total: int
+    page: int = 1
+    page_size: int = 20
+
+
+# ==================== 跟进记录 ====================
+
+class FollowUpCreate(BaseModel):
+    """新增跟进记录"""
+    employee_id: int = Field(..., examples=[2])
+    follow_type: Literal["phone", "wechat", "meeting", "email", "other"] = Field(
+        ..., description="跟进方式：phone/wechat/meeting/email/other",
+        examples=["wechat"])
+    content: str = Field(..., examples=["客户确认意向，下周面谈"])
+    next_plan: Optional[str] = Field(None, max_length=500, examples=["安排线下咨询"])
+
+
+class FollowUpResponse(BaseModel):
+    """跟进记录响应"""
+    id: int
+    lead_id: int
+    employee_id: int
+    follow_type: str
+    content: str
+    next_plan: Optional[str] = None
+    create_time: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+# ==================== 员工日报 ====================
+
+class DailyReportCreate(BaseModel):
+    """提交日报"""
+    employee_id: int = Field(..., examples=[2])
+    employee_name: Optional[str] = Field(None, examples=["王小明"])
+    department: Optional[str] = Field(None, examples=["留学部"])
+    report_date: date = Field(..., examples=["2025-03-20"])
+    raw_content: Optional[str] = Field(None, description="口述/输入原文",
+                                       examples=["今天跟进了3个客户..."])
+    content: Optional[str] = Field(None, description="AI结构化后的文本")
+    key_progress: Optional[List[str]] = Field(None, examples=[["签约1单", "新增2个意向"]])
+    risks: Optional[List[str]] = Field(None, examples=[["客户A可能流失"]])
+    next_plan: Optional[str] = Field(None, examples=["明天跟进新客户"])
+
+
+class DailyReportResponse(BaseModel):
+    """日报响应"""
+    id: int
+    employee_id: int
+    employee_name: Optional[str] = None
+    department: Optional[str] = None
+    report_date: date
+    raw_content: Optional[str] = None
+    content: Optional[str] = None
+    key_progress: Optional[List[str]] = None
+    risks: Optional[List[str]] = None
+    next_plan: Optional[str] = None
+    create_time: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class EmployeeSummaryItem(BaseModel):
+    """单个员工的日报汇总"""
+    employee_id: int
+    employee_name: Optional[str] = None
+    key_progress: Optional[List[str]] = None
+    risks: Optional[List[str]] = None
+
+
+class DailyReportSummaryResponse(BaseModel):
+    """日报汇总响应（管理层用）"""
+    report_date: date
+    department: Optional[str] = None
+    total_submitted: int
+    employees: List[EmployeeSummaryItem]
