@@ -13,8 +13,8 @@ from pydantic import BaseModel, Field
 
 class LeadCreate(BaseModel):
     """新增意向客户"""
-    customer_name: str = Field(..., max_length=100, examples=["李四"])
-    contact_info: str = Field(..., max_length=50, examples=["139xxxx0002"])
+    customer_name: str = Field(..., max_length=64, examples=["李四"])
+    contact_info: Optional[str] = Field(None, max_length=128, examples=["139xxxx0002"])
     gender: Optional[str] = Field(None, max_length=10, examples=["M"])
     age: Optional[int] = Field(None, examples=[25])
     education_level: Optional[str] = Field(None, examples=["本科"])
@@ -22,8 +22,9 @@ class LeadCreate(BaseModel):
     intended_major: Optional[str] = Field(None, examples=["计算机科学"])
     source_channel: Optional[str] = Field(None, examples=["线上"])
     background_info: Optional[str] = Field(None, examples=["对UCL计算机硕士感兴趣，GPA 3.5"])
+    customer_profile_id: Optional[int] = Field(None, examples=[1])
     remark: Optional[str] = Field(None, examples=["高意向客户，需尽快跟进"])
-    owner_employee_id: Optional[int] = Field(None, examples=[2])
+    owner_employee_id: int = Field(..., examples=[2])
 
 
 class LeadUpdate(BaseModel):
@@ -38,6 +39,7 @@ class LeadUpdate(BaseModel):
     intended_major: Optional[str] = None
     source_channel: Optional[str] = None
     background_info: Optional[str] = None
+    customer_profile_id: Optional[int] = None
     remark: Optional[str] = None
     owner_employee_id: Optional[int] = None
 
@@ -68,6 +70,7 @@ class LeadResponse(BaseModel):
     status: str
     lost_reason: Optional[str] = None
     owner_employee_id: Optional[int] = None
+    customer_profile_id: Optional[int] = None
     owner_name: Optional[str] = None
     last_contact_time: Optional[datetime] = None
     create_time: Optional[datetime] = None
@@ -96,7 +99,7 @@ class FollowUpCreate(BaseModel):
         examples=["wechat"])
     # Literal 限制只能选这5种跟进方式，FastAPI 自动校验
     content: str = Field(..., examples=["客户确认意向，下周面谈"])
-    next_plan: Optional[str] = Field(None, max_length=500, examples=["安排线下咨询"])
+    next_plan: Optional[str] = Field(None, max_length=255, examples=["安排线下咨询"])
 
 
 class FollowUpResponse(BaseModel):
@@ -117,13 +120,14 @@ class FollowUpResponse(BaseModel):
 class DailyReportCreate(BaseModel):
     """提交日报"""
     employee_id: int = Field(..., examples=[2])
-    employee_name: Optional[str] = Field(None, examples=["王小明"])
-    department: Optional[str] = Field(None, examples=["留学部"])
     report_date: date = Field(..., examples=["2025-03-20"])
+    status: Literal["draft", "submitted"] = Field(
+        "draft", description="日报状态：draft(草稿)/submitted(已提交)",
+        examples=["draft"])
     raw_content: Optional[str] = Field(None, description="口述/输入原文",
                                        examples=["今天跟进了3个客户..."])
     # raw_content: 员工原始口述，content: Dify/AI 结构化后的版本
-    content: Optional[str] = Field(None, description="AI结构化后的文本")
+    content: str = Field(..., description="AI结构化后的文本")
     key_progress: Optional[List[str]] = Field(None, examples=[["签约1单", "新增2个意向"]])
     # key_progress 和 risks 是字符串数组，支持多条进展/风险
     risks: Optional[List[str]] = Field(None, examples=[["客户A可能流失"]])
@@ -134,11 +138,10 @@ class DailyReportResponse(BaseModel):
     """日报响应"""
     id: int
     employee_id: int
-    employee_name: Optional[str] = None
-    department: Optional[str] = None
     report_date: date
+    status: str
     raw_content: Optional[str] = None
-    content: Optional[str] = None
+    content: str
     key_progress: Optional[List[str]] = None
     risks: Optional[List[str]] = None
     next_plan: Optional[str] = None
@@ -150,7 +153,6 @@ class DailyReportResponse(BaseModel):
 class EmployeeSummaryItem(BaseModel):
     """单个员工的日报汇总"""
     employee_id: int
-    employee_name: Optional[str] = None
     key_progress: Optional[List[str]] = None
     risks: Optional[List[str]] = None
 
@@ -158,6 +160,5 @@ class EmployeeSummaryItem(BaseModel):
 class DailyReportSummaryResponse(BaseModel):
     """日报汇总响应（管理层用）"""
     report_date: date
-    department: Optional[str] = None
     total_submitted: int
     employees: List[EmployeeSummaryItem]

@@ -140,8 +140,7 @@ class CrmService:
         """根据 ID 查询客户（排除已软删除的）"""
         return (
             self.db.query(CrmLead)
-            .filter(CrmLead.id == lead_id, CrmLead.is_deleted == 0)
-            # is_deleted == 0：软删除标记，确保已删除的客户不会被查到
+            .filter(CrmLead.id == lead_id)
             .first()
             # .first() 返回第一条匹配记录，无匹配则返回 None
         )
@@ -157,8 +156,8 @@ class CrmService:
         page_size: int = 20,
     ) -> LeadListResponse:
         """条件搜索 + 分页查询客户列表"""
-        query = self.db.query(CrmLead).filter(CrmLead.is_deleted == 0)
-        # 基础过滤：始终排除已软删除的客户
+        query = self.db.query(CrmLead)
+        # 基础查询：意向客户列表
 
         if status:
             query = query.filter(CrmLead.status == status)
@@ -308,22 +307,20 @@ class CrmService:
         if not lead:
             raise NotFoundError(f"意向客户不存在: id={lead_id}")
 
-        with self.db.begin():
-            # db.begin() 开启事务，退出 with 块时自动 commit，异常时自动 rollback
-            # 创建跟进记录
-            follow_up = CrmFollowUp(lead_id=lead_id, **data.model_dump())
-            self.db.add(follow_up)
+        # 创建跟进记录
+        follow_up = CrmFollowUp(lead_id=lead_id, **data.model_dump())
+        self.db.add(follow_up)
 
-            # 同步更新客户最后联系时间和更新时间（与跟进记录在同一事务中）
-            self.db.execute(
-                update(CrmLead)
-                .where(CrmLead.id == lead_id)
-                .values(
-                    last_contact_time=func.now(),
-                    update_time=func.now(),
-                )
+        # 同步更新客户最后联系时间和更新时间（与跟进记录在同一事务中）
+        self.db.execute(
+            update(CrmLead)
+            .where(CrmLead.id == lead_id)
+            .values(
+                last_contact_time=func.now(),
+                update_time=func.now(),
             )
-            # 如果其中一步失败，整个事务回滚，保证数据一致性
+        )
+        self.db.commit()
 
         self.db.refresh(follow_up)
         return follow_up
@@ -334,7 +331,6 @@ class CrmService:
             self.db.query(CrmFollowUp)
             .filter(
                 CrmFollowUp.lead_id == lead_id,
-                CrmFollowUp.is_deleted == 0,
             )
             .order_by(CrmFollowUp.create_time.desc())
             .all()
@@ -401,7 +397,6 @@ class EmployeeService:
     def list_reports(
         self,
         employee_id: Optional[int] = None,
-        department: Optional[str] = None,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
     ) -> List[EmployeeDailyReport]:
@@ -410,8 +405,6 @@ class EmployeeService:
 
         if employee_id:
             query = query.filter(EmployeeDailyReport.employee_id == employee_id)
-        if department:
-            query = query.filter(EmployeeDailyReport.department == department)
         if start_date:
             query = query.filter(EmployeeDailyReport.report_date >= start_date)
         if end_date:
@@ -421,25 +414,22 @@ class EmployeeService:
         return query.order_by(EmployeeDailyReport.report_date.desc()).all()
 
     def get_summary(
-        self, report_date: date, department: Optional[str] = None
+        self, report_date: date,
     ) -> DailyReportSummaryResponse:
         """
         日报汇总（管理层用）
-        - 统计指定日期（+可选部门）的日报提交情况
+        - 统计指定日期的日报提交情况
         - 汇总每个员工的关键进展和风险
         """
         query = self.db.query(EmployeeDailyReport).filter(
             EmployeeDailyReport.report_date == report_date
         )
-        if department:
-            query = query.filter(EmployeeDailyReport.department == department)
 
         reports = query.all()
 
         employees = [
             EmployeeSummaryItem(
                 employee_id=r.employee_id,
-                employee_name=r.employee_name,
                 key_progress=r.key_progress or [],
                 risks=r.risks or [],
             )
@@ -449,7 +439,6 @@ class EmployeeService:
 
         return DailyReportSummaryResponse(
             report_date=report_date,
-            department=department,
             total_submitted=len(reports),
             employees=employees,
         )

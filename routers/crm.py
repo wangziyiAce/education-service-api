@@ -26,6 +26,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from schemas.crm import (
@@ -34,9 +35,7 @@ from schemas.crm import (
     DailyReportCreate, DailyReportResponse, DailyReportSummaryResponse,
 )
 from services.crm_service import (
-    CrmService, EmployeeService,
-    BizError, ParamError, NotFoundError, RefNotFoundError,
-    StateError, ConflictError,
+    CrmService, EmployeeService, NotFoundError,
 )
 from utils.database import get_db
 
@@ -50,7 +49,7 @@ def success_response(data, message: str = "success", code: int = 200):
     """统一成功响应格式，返回 JSONResponse"""
     return JSONResponse(
         status_code=code,
-        content={"code": code, "message": message, "data": data},
+        content=jsonable_encoder({"code": code, "message": message, "data": data}),
     )
 
 
@@ -236,17 +235,15 @@ def create_daily_report(data: DailyReportCreate, db: Session = Depends(get_db)):
                       summary="查询日报（支持按员工、日期、部门筛选）")
 def list_daily_reports(
     employee_id: Optional[int] = Query(None, description="员工ID"),
-    department: Optional[str] = Query(None, description="部门"),
     start_date: Optional[date] = Query(None, description="起始日期"),
     end_date: Optional[date] = Query(None, description="截止日期"),
     db: Session = Depends(get_db),
 ):
-    logger.info("GET /api/v1/employee/daily-reports employee=%d dept=%s",
-                employee_id, department)
+    logger.info("GET /api/v1/employee/daily-reports employee=%d",
+                employee_id)
     service = EmployeeService(db)
     reports = service.list_reports(
         employee_id=employee_id,
-        department=department,
         start_date=start_date,
         end_date=end_date,
     )
@@ -260,13 +257,12 @@ def list_daily_reports(
                       summary="日报汇总（管理层用）")
 def daily_report_summary(
     report_date: date = Query(..., description="汇总日期"),
-    department: Optional[str] = Query(None, description="按部门筛选"),
     db: Session = Depends(get_db),
 ):
-    logger.info("GET /api/v1/employee/daily-reports/summary date=%s dept=%s",
-                report_date, department)
+    logger.info("GET /api/v1/employee/daily-reports/summary date=%s",
+                report_date)
     service = EmployeeService(db)
-    result = service.get_summary(report_date=report_date, department=department)
+    result = service.get_summary(report_date=report_date)
     return success_response(data=result.model_dump())
 
 

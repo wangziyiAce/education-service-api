@@ -36,11 +36,13 @@ from contextlib import asynccontextmanager
 
 # --- FastAPI 框架 ---
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 # --- 项目内部模块 ---
 from config import APP_NAME, APP_VERSION, APP_DEBUG   # 应用元信息
 from routers.crm import crm_router, employee_router
 from utils.database import init_db                     # 数据库建表函数
+from services.crm_service import BizError             # 业务异常基类（统一异常处理）
 
 
 # ============================================================
@@ -102,6 +104,21 @@ app = FastAPI(
     debug=APP_DEBUG,
     lifespan=lifespan,
 )
+
+
+# ============================================================
+# 业务异常统一处理器
+# ============================================================
+# services/crm_service 中定义的 BizError 及其子类（ParamError / NotFoundError /
+# RefNotFoundError / StateError / ConflictError）统一在此转换为 JSON 错误响应，
+# 保证客户端拿到结构化的 {code, message, data} 以及正确的 HTTP 状态码。
+@app.exception_handler(BizError)
+def biz_error_handler(request, exc: BizError):
+    """把业务异常转成统一 JSON 错误体"""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"code": exc.code, "message": exc.message, "data": None},
+    )
 
 
 # ============================================================
