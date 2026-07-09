@@ -40,32 +40,18 @@ from services.crm_service import (
 )
 from utils.database import get_db
 
-crm_router = APIRouter(prefix="/api/v1/crm", tags=["CRM 意向客户管理"])
-employee_router = APIRouter(prefix="/api/v1/employee", tags=["员工日报管理"])
+crm_router = APIRouter()
+employee_router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
 
-# ==================== FastAPI 异常处理器 ====================
-
-@crm_router.exception_handler(BizError)
-async def biz_error_handler(request: Request, exc: BizError):
-    """统一业务异常处理：BizError 及其所有子类"""
-    logger.warning(
-        "BizError: method=%s path=%s code=%d message=%s",
-        request.method, request.url.path, exc.code, exc.message,
-    )
+def success_response(data, message: str = "success", code: int = 200):
+    """统一成功响应格式，返回 JSONResponse"""
     return JSONResponse(
-        status_code=exc.status_code,
-        content={"code": exc.code, "message": exc.message, "data": None},
+        status_code=code,
+        content={"code": code, "message": message, "data": data},
     )
-
-
-# ==================== 统一响应工具 ====================
-
-def success_response(data=None, message: str = "success", code: int = 0):
-    """统一成功响应"""
-    return {"code": code, "message": message, "data": data}
 
 
 # ==================== 意向客户 CRUD ====================
@@ -85,9 +71,11 @@ def create_lead(data: LeadCreate, db: Session = Depends(get_db)):
     logger.info("POST /api/v1/crm/leads customer_name=%s owner=%s",
                 data.customer_name, data.owner_employee_id)
     service = CrmService(db)
+    # 每个请求创建新的 Service 实例，绑定当前请求的数据库会话
     lead = service.create_lead(data)
     return success_response(
         data=LeadResponse.model_validate(lead).model_dump(),
+        # ORM对象 → Pydantic Schema → dict，过滤掉内部字段只返回客户端需要的
         message="创建成功",
     )
 
@@ -100,8 +88,11 @@ def list_leads(
     create_time_start: Optional[date] = Query(None, description="创建时间起始"),
     create_time_end: Optional[date] = Query(None, description="创建时间截止"),
     page: int = Query(1, ge=1),
+    # ge=1：页码最小为1，FastAPI 自动校验，不合规返回 422
     page_size: int = Query(20, ge=1, le=100),
+    # le=100：每页最多100条，防止恶意请求拖垮数据库
     db: Session = Depends(get_db),
+    # Depends(get_db)：FastAPI 依赖注入，自动调用 get_db() 获取数据库会话
 ):
     """
     查询意向客户列表。
@@ -136,6 +127,7 @@ def get_lead(lead_id: int, db: Session = Depends(get_db)):
     lead = service.get_lead(lead_id)
     if not lead:
         raise NotFoundError("客户不存在")
+    # 抛出 NotFoundError → 被 biz_error_handler 捕获 → 返回 404 + JSON 错误体
     return success_response(data=LeadResponse.model_validate(lead).model_dump())
 
 
@@ -169,6 +161,7 @@ def update_lead_status(lead_id: int, data: LeadStatusUpdate,
     logger.info("PUT /api/v1/crm/leads/%d/status new=%s", lead_id, data.status)
     service = CrmService(db)
     lead = service.update_lead_status(lead_id, data)
+    # Service 层包含完整的状态机校验 + 乐观锁并发控制
     return success_response(
         data=LeadResponse.model_validate(lead).model_dump(),
         message="状态更新成功",
@@ -207,9 +200,11 @@ def list_follow_ups(lead_id: int, db: Session = Depends(get_db)):
     service = CrmService(db)
     if not service.get_lead(lead_id):
         raise NotFoundError("客户不存在")
+    # 先校验客户存在，再查跟进记录（避免对不存在的客户返回空数组）
     follow_ups = service.list_follow_ups(lead_id)
     return success_response(
         data=[FollowUpResponse.model_validate(f).model_dump() for f in follow_ups]
+        # 列表推导：每条 ORM 记录转为 Pydantic Schema → dict
     )
 
 
@@ -230,6 +225,7 @@ def create_daily_report(data: DailyReportCreate, db: Session = Depends(get_db)):
                 data.employee_id, data.report_date)
     service = EmployeeService(db)
     report = service.create_report(data)
+    # Service 层包含日期校验 + 员工存在性校验 + 重复提交检查
     return success_response(
         data=DailyReportResponse.model_validate(report).model_dump(),
         message="日报提交成功",
@@ -282,4 +278,5 @@ def get_daily_report(report_id: int, db: Session = Depends(get_db)):
     report = service.get_report(report_id)
     if not report:
         raise NotFoundError("日报不存在")
+    # router 层做"存在性判断 → 抛异常"，service 层只负责数据查询
     return success_response(data=DailyReportResponse.model_validate(report).model_dump())

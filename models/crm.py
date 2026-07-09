@@ -45,6 +45,9 @@ from typing import Optional        # Optional[X] = X | None
 
 # --- SQLAlchemy 通用类型 ---
 from sqlalchemy import (
+    Column,     # 旧式列定义（用于企业智能助手模块的 Model）
+    BigInteger, # 大整数 → MySQL BIGINT
+    Date,       # 日期   → MySQL DATE
     DateTime,   # 日期时间 → MySQL DATETIME
     Enum,       # 枚举     → MySQL ENUM
     Index,      # 显式索引
@@ -53,6 +56,7 @@ from sqlalchemy import (
     Numeric,    # 定点数   → MySQL DECIMAL（精确到指定小数位）
     String,     # 字符串   → MySQL VARCHAR
     Text,       # 长文本   → MySQL TEXT
+    UniqueConstraint,  # 唯一约束
     func,       # SQL 函数 → func.now() = MySQL NOW()
 )
 
@@ -60,7 +64,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.mysql import BIGINT
 
 # --- ORM 声明式映射 ---
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 # --- 导入 ORM 基类 ---
 from utils.database import Base
@@ -583,3 +587,117 @@ class CustomerProfile(Base):
             f"<CustomerProfile(id={self.id}, customer_name={self.customer_name!r}, "
             f"match_result={self.match_result!r})>"
         )
+
+
+# ============================================================
+# 四、CrmLead — 意向客户表（企业智能助手模块）
+# ============================================================
+
+class CrmLead(Base):
+    """意向客户表（企业智能助手模块 — 旧式 Column API）"""
+    __tablename__ = "crm_lead"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    customer_name = Column(String(100), nullable=False, comment="客户姓名")
+    contact_info = Column(String(50), nullable=False, comment="联系方式")
+    gender = Column(String(10), comment="性别: M/F")
+    age = Column(Integer, comment="年龄")
+    education_level = Column(String(50), comment="学历层次")
+    intended_country = Column(String(200), comment="意向国家")
+    intended_major = Column(String(100), comment="意向专业")
+    source_channel = Column(String(50), comment="来源渠道")
+    background_info = Column(Text, comment="背景信息")
+    remark = Column(Text, comment="备注")
+    status = Column(String(20), nullable=False, default="new",
+                    comment="状态: new/contacting/qualified/signed/lost")
+    # default="new"：新建客户默认状态为"新客户"
+    lost_reason = Column(String(255), comment="流失原因")
+    owner_employee_id = Column(BigInteger, comment="负责员工ID")
+    # 逻辑外键 → sys_user.id，不在数据库层面建 FOREIGN KEY
+    last_contact_time = Column(DateTime, comment="最后联系时间")
+    # 每次新增跟进记录时自动更新（见 CrmService.create_follow_up）
+    is_deleted = Column(Integer, nullable=False, default=0,
+                        comment="软删除标记: 0=正常 1=已删除")
+    # 软删除：所有查询都过滤 is_deleted=0，删除操作只设标记不真删
+    create_time = Column(DateTime, server_default=func.now())
+    # server_default=func.now()：由 MySQL 在 INSERT 时自动填入当前时间
+    update_time = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    # onupdate=func.now()：每次 UPDATE 时自动刷新为当前时间
+
+    # 一对多关系：一个客户对应多条跟进记录
+    follow_ups = relationship("CrmFollowUp", back_populates="lead", lazy="dynamic")
+    # lazy="dynamic"：访问 follow_ups 时返回 Query 对象，支持进一步过滤/分页
+
+    __table_args__ = (
+        Index("idx_crm_lead_status", "status"),
+        Index("idx_crm_lead_owner", "owner_employee_id"),
+        Index("idx_crm_lead_name", "customer_name"),
+        Index("idx_crm_lead_last_contact", "last_contact_time"),
+        Index("idx_crm_lead_is_deleted", "is_deleted"),
+        # is_deleted 建索引：几乎所有查询都带 is_deleted=0 条件，索引加速过滤
+        Index("idx_crm_lead_create_time", "create_time"),
+    )
+
+
+# ============================================================
+# 五、CrmFollowUp — 客户跟进记录表（企业智能助手模块）
+# ============================================================
+
+class CrmFollowUp(Base):
+    """客户跟进记录表（企业智能助手模块）"""
+    __tablename__ = "crm_follow_up"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    lead_id = Column(BigInteger, nullable=False, comment="客户ID（逻辑关联 crm_lead.id）")
+    # 逻辑外键 → crm_lead.id，由应用层 CrmService 校验客户是否存在
+    employee_id = Column(BigInteger, nullable=False, comment="跟进员工ID")
+    follow_type = Column(String(20), nullable=False,
+                         comment="跟进方式: phone/wechat/meeting/email/other")
+    content = Column(Text, nullable=False, comment="跟进内容")
+    next_plan = Column(String(500), comment="下一步计划")
+    is_deleted = Column(Integer, nullable=False, default=0,
+                        comment="软删除标记: 0=正常 1=已删除")
+    create_time = Column(DateTime, server_default=func.now())
+    # 注意：跟进记录没有 update_time，创建后不可修改（保证历史记录真实性）
+
+    lead = relationship("CrmLead", back_populates="follow_ups")
+    # 反向关系：通过 lead 属性可以访问对应的意向客户
+
+    __table_args__ = (
+        Index("idx_follow_up_lead", "lead_id"),
+        # 查询某客户的所有跟进记录 → WHERE lead_id=X，索引直接定位
+        Index("idx_follow_up_employee", "employee_id"),
+    )
+
+
+# ============================================================
+# 六、EmployeeDailyReport — 员工日报表（企业智能助手模块）
+# ============================================================
+
+class EmployeeDailyReport(Base):
+    """员工日报表（企业智能助手模块）"""
+    __tablename__ = "employee_daily_report"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    employee_id = Column(BigInteger, nullable=False, comment="员工ID")
+    employee_name = Column(String(50), comment="员工姓名")
+    # 冗余存储员工姓名和部门，避免每次查日报都要 JOIN sys_user
+    department = Column(String(50), comment="所属部门")
+    report_date = Column(Date, nullable=False, comment="日报日期")
+    raw_content = Column(Text, comment="口述/原文内容")
+    # raw_content: 员工原始输入；content: Dify/AI 结构化后的版本
+    content = Column(Text, comment="AI结构化后的内容")
+    key_progress = Column(JSON, comment="关键进展数组")
+    # JSON 数组：["签约1单", "新增2个意向"]，灵活支持多条进展
+    risks = Column(JSON, comment="风险项数组")
+    next_plan = Column(Text, comment="明日计划")
+    create_time = Column(DateTime, server_default=func.now())
+    # 日报没有 update_time 和软删除，创建后不可修改（保证日报的真实性和可追溯性）
+
+    __table_args__ = (
+        Index("idx_daily_report_employee", "employee_id"),
+        Index("idx_daily_report_date", "report_date"),
+        Index("idx_daily_report_dept", "department"),
+        UniqueConstraint("employee_id", "report_date", name="uk_employee_date"),
+        # 唯一约束：同一员工同一天只能有一条日报，数据库层兜底保护
+    )

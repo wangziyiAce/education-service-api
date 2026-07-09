@@ -39,6 +39,7 @@ from fastapi import FastAPI
 
 # --- 项目内部模块 ---
 from config import APP_NAME, APP_VERSION, APP_DEBUG   # 应用元信息
+from routers.crm import crm_router, employee_router
 from utils.database import init_db                     # 数据库建表函数
 
 
@@ -158,7 +159,8 @@ def health_check():
 # from routers import chat, crm, profile, report, student, tools
 #
 # app.include_router(chat.router,    prefix="/api/v1/chat",    tags=["客服Agent"])
-# app.include_router(crm.router,     prefix="/api/v1/crm",     tags=["企业助手"])
+app.include_router(crm_router,      prefix="/api/v1/crm",      tags=["企业助手"])
+app.include_router(employee_router, prefix="/api/v1/employee", tags=["员工日报"])
 # app.include_router(profile.router, prefix="/api/v1/profile", tags=["客户研判"])
 # app.include_router(report.router,  prefix="/api/v1/report",  tags=["智能报告"])
 # app.include_router(student.router, prefix="/api/v1/student", tags=["学生助手"])

@@ -30,24 +30,29 @@ except ImportError:
 # ==================== 业务异常类（对齐 API 规范 V1.2 第 3 章错误码） ====================
 
 class BizError(Exception):
-    """业务异常基类，router 层统一捕获并转为 HTTPException"""
+    """业务异常基类，router 层统一捕获并转为 JSON 错误响应"""
     def __init__(self, code: int, message: str, status_code: int = 400):
         self.code = code
+        # 业务错误码，如 40001、40401，前端可根据此码做不同处理
         self.message = message
+        # HTTP 状态码，由 exception_handler 读取并设置到响应上
         self.status_code = status_code
         super().__init__(message)
+        # 调用 Exception.__init__，保留标准异常的堆栈跟踪能力
 
 
 class ParamError(BizError):
     """参数校验失败 40001"""
     def __init__(self, message: str):
         super().__init__(code=40001, message=message, status_code=400)
+        # 40001 = 请求参数不合法，前端可直接展示 message 给用户
 
 
 class NotFoundError(BizError):
     """资源不存在 40401"""
     def __init__(self, message: str):
         super().__init__(code=40401, message=message, status_code=404)
+        # 40401 = 请求的资源（客户/日报/跟进记录）不存在
 
 
 class RefNotFoundError(BizError):
@@ -58,18 +63,21 @@ class RefNotFoundError(BizError):
             message=f"{entity}不存在: id={id_value}",
             status_code=404
         )
+        # 40402 = 逻辑外键校验失败，如 owner_employee_id 对应的员工不存在
 
 
 class StateError(BizError):
     """状态不允许操作 40902 / 42204"""
     def __init__(self, message: str, code: int = 40902):
         super().__init__(code=code, message=message, status_code=422)
+        # 42204 = 状态流转不合法（如从终态 signed 回退）
 
 
 class ConflictError(BizError):
     """业务冲突 40901"""
     def __init__(self, message: str):
         super().__init__(code=40901, message=message, status_code=409)
+        # 40901 = 并发冲突或重复提交（如同一员工同日重复提交日报）
 
 
 # 客户状态流转规则：signed 和 lost 是终态，不可回退
@@ -77,9 +85,11 @@ VALID_STATUS_TRANSITIONS = {
     "new": ["contacting", "lost"],
     "contacting": ["qualified", "lost"],
     "qualified": ["signed", "lost"],
-    "signed": [],       # 终态
-    "lost": [],          # 终态
+    "signed": [],       # 终态：已签约，不允许任何状态变更
+    "lost": [],          # 终态：已流失，不允许任何状态变更
 }
+# 用途：update_lead_status() 中校验状态流转合法性
+# 扩展：新增状态时只需在此字典中添加对应的允许目标状态列表
 
 
 class CrmService:
@@ -109,16 +119,21 @@ class CrmService:
                 SysUser.user_type == 'employee',
                 SysUser.status == 'normal'
             ).first()
+            # 三个条件：ID存在 + 用户类型为员工 + 账号正常，任一不满足则拒绝
             if not owner:
                 raise RefNotFoundError("员工", owner_id)
 
         lead = CrmLead(
             status="new",
             **data.model_dump()
+            # **data.model_dump() 展开所有 Pydantic 字段为关键字参数
         )
         self.db.add(lead)
+        # 将新对象加入 SQLAlchemy 会话的待插入队列
         self.db.commit()
+        # 提交事务，生成 INSERT SQL 并执行，此时 lead.id 被数据库自动赋值
         self.db.refresh(lead)
+        # 刷新对象，从数据库重新加载（获取自增 ID、server_default 默认值等）
         return lead
 
     def get_lead(self, lead_id: int) -> Optional[CrmLead]:
@@ -126,7 +141,9 @@ class CrmService:
         return (
             self.db.query(CrmLead)
             .filter(CrmLead.id == lead_id, CrmLead.is_deleted == 0)
+            # is_deleted == 0：软删除标记，确保已删除的客户不会被查到
             .first()
+            # .first() 返回第一条匹配记录，无匹配则返回 None
         )
 
     def list_leads(
@@ -141,6 +158,7 @@ class CrmService:
     ) -> LeadListResponse:
         """条件搜索 + 分页查询客户列表"""
         query = self.db.query(CrmLead).filter(CrmLead.is_deleted == 0)
+        # 基础过滤：始终排除已软删除的客户
 
         if status:
             query = query.filter(CrmLead.status == status)
@@ -152,10 +170,12 @@ class CrmService:
                     CrmLead.customer_name.contains(keyword),
                     CrmLead.contact_info.contains(keyword),
                 )
+                # or_() = SQL 的 OR，姓名或联系方式任一匹配即返回
             )
         if create_time_start:
             query = query.filter(
                 func.date(CrmLead.create_time) >= create_time_start
+                # func.date() 提取 DATETIME 的日期部分，忽略时分秒
             )
         if create_time_end:
             query = query.filter(
@@ -163,15 +183,19 @@ class CrmService:
             )
 
         total = query.count()
+        # 先 count 再分页：获取符合条件的总记录数（用于前端分页组件）
         items = (
             query.order_by(CrmLead.create_time.desc())
             .offset((page - 1) * page_size)
+            # offset 跳过前 N 页的记录，page=1 时 offset=0
             .limit(page_size)
+            # limit 限制每页条数
             .all()
         )
 
         return LeadListResponse(
             items=[LeadResponse.model_validate(item) for item in items],
+            # model_validate：将 ORM 对象转为 Pydantic Schema，自动过滤未定义字段
             total=total,
             page=page,
             page_size=page_size,
@@ -184,6 +208,8 @@ class CrmService:
             return None
 
         update_data = data.model_dump(exclude_unset=True)
+        # exclude_unset=True：只导出客户端实际传了的字段，未传的字段不出现在 dict 中
+        # 这样实现了"部分更新"：只修改传了的字段，未传的保持原值
 
         # 如果更新了 owner_employee_id，校验新负责人存在
         if "owner_employee_id" in update_data and HAS_SYS_USER:
@@ -199,7 +225,9 @@ class CrmService:
 
         for key, value in update_data.items():
             setattr(lead, key, value)
+            # 动态设置 ORM 对象属性，只修改 update_data 中有的字段
         self.db.commit()
+        # SQLAlchemy 自动追踪变更，只生成被修改字段的 UPDATE SET
         self.db.refresh(lead)
         return lead
 
@@ -231,6 +259,7 @@ class CrmService:
                 f"允许的目标状态：{allowed if allowed else '无（当前为终态）'}",
                 code=42204,
             )
+        # 从 VALID_STATUS_TRANSITIONS 字典查询当前状态允许跳转到哪些状态
 
         # lost 时必须填写原因
         if new_status == "lost" and not data.lost_reason:
@@ -250,11 +279,14 @@ class CrmService:
                 CrmLead.id == lead_id,
                 CrmLead.status == current_status,  # 乐观锁条件
             )
+            # 条件 UPDATE：WHERE id=X AND status=current_status
+            # 如果并发请求先改了状态，此处的 rowcount 将为 0
             .values(**values)
         )
 
         if result.rowcount == 0:
             raise ConflictError("状态已被其他操作修改，请刷新后重试")
+        # rowcount=0 表示没有行被更新，说明 status 已被并发请求修改
 
         self.db.commit()
         self.db.refresh(lead)
@@ -277,11 +309,12 @@ class CrmService:
             raise NotFoundError(f"意向客户不存在: id={lead_id}")
 
         with self.db.begin():
+            # db.begin() 开启事务，退出 with 块时自动 commit，异常时自动 rollback
             # 创建跟进记录
             follow_up = CrmFollowUp(lead_id=lead_id, **data.model_dump())
             self.db.add(follow_up)
 
-            # 同步更新客户最后联系时间和更新时间
+            # 同步更新客户最后联系时间和更新时间（与跟进记录在同一事务中）
             self.db.execute(
                 update(CrmLead)
                 .where(CrmLead.id == lead_id)
@@ -290,6 +323,7 @@ class CrmService:
                     update_time=func.now(),
                 )
             )
+            # 如果其中一步失败，整个事务回滚，保证数据一致性
 
         self.db.refresh(follow_up)
         return follow_up
@@ -325,6 +359,7 @@ class EmployeeService:
         # 日期校验
         if data.report_date > date.today():
             raise ParamError("report_date 不能是未来日期")
+        # 防止提交未来日期的日报，保证数据真实性
 
         # 逻辑外键校验：员工存在
         if HAS_SYS_USER:
@@ -349,6 +384,8 @@ class EmployeeService:
                 f"员工 {data.employee_id} 在 {data.report_date} 已提交过日报，"
                 "如需修改请使用更新接口"
             )
+        # 应用层检查：同一员工同一天只能有一份日报
+        # 数据库层也有 uk_employee_date 唯一索引做兜底保护
 
         report = EmployeeDailyReport(**data.model_dump())
         self.db.add(report)
@@ -368,7 +405,7 @@ class EmployeeService:
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
     ) -> List[EmployeeDailyReport]:
-        """条件查询日报列表"""
+        """条件查询日报列表（所有参数可选，不传则不做对应过滤）"""
         query = self.db.query(EmployeeDailyReport)
 
         if employee_id:
@@ -379,6 +416,7 @@ class EmployeeService:
             query = query.filter(EmployeeDailyReport.report_date >= start_date)
         if end_date:
             query = query.filter(EmployeeDailyReport.report_date <= end_date)
+        # 动态拼接过滤条件：只对实际传入的参数添加 WHERE 子句
 
         return query.order_by(EmployeeDailyReport.report_date.desc()).all()
 
@@ -407,6 +445,7 @@ class EmployeeService:
             )
             for r in reports
         ]
+        # 列表推导式：将每条日报记录转为汇总条目，提取管理层关心的关键字段
 
         return DailyReportSummaryResponse(
             report_date=report_date,
