@@ -1,0 +1,131 @@
+@import 'tailwindcss';
+
+/* ============================================================
+ *  粤教智服 · 国际教育智能服务平台 — 设计系统 Token
+ *  品牌色：深海军蓝 / 靛蓝
+ *  语义色：青绿(成功) / 橙色(警告) / 红色(危险) / 蓝色(信息)
+ *  基础色：Slate 系列
+ * ============================================================ */
+
+/* ---- shadcn/ui CSS 变量（base-nova / neutral）---- */
+:root {
+  --background: #ffffff;
+  --foreground: oklch(0.145 0 0);
+  --card: #ffffff;
+  --card-foreground: oklch(0.145 0 0);
+  --popover: #ffffff;
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: #234999;
+  --primary-foreground: #f8fafc;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #1e293b;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --accent: #f1f5f9;
+  --accent-foreground: #1e293b;
+  --destructive: #ef4444;
+  --destructive-foreground: #f8fafc;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #234999;
+  --radius: 0.5rem;
+
+  /* ---- Sidebar ---- */
+  --sidebar-background: #0f2740;
+  --sidebar-foreground: #b0c4de;
+  --sidebar-primary: #4a90d9;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1a3470;
+  --sidebar-accent-foreground: #d4e0f5;
+  --sidebar-border: #1a3470;
+  --sidebar-ring: #4a90d9;
+
+  /* 图表配色 */
+  --chart-1: #234999;
+  --chart-2: #10b981;
+  --chart-3: #f59e0b;
+  --chart-4: #ef4444;
+  --chart-5: #3b82f6;
+}
+
+/* ---- Tailwind v4 @theme（将 CSS 变量映射为 Tailwind 类）---- */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar-background: var(--sidebar-background);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* ---- 品牌色（独立 Tailwind 类）---- */
+@theme {
+  --color-brand-950: #0f1d3d;
+  --color-brand-900: #13274f;
+  --color-brand-800: #1a3470;
+  --color-brand-700: #1e3f85;
+  --color-brand-600: #234999;
+  --color-brand-500: #2b5fc4;
+  --color-brand-400: #4d7dd5;
+  --color-brand-300: #7a9fe0;
+  --color-brand-200: #a8c2eb;
+  --color-brand-100: #d4e0f5;
+  --color-brand-50: #edf3fb;
+
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #3b82f6;
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+}
+
+/* ---- 基础样式层 ---- */
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    font-family: var(--font-sans);
+    color: var(--foreground);
+    background-color: #f8fafc;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    margin: 0;
+  }
+}
