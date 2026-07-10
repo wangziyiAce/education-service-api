@@ -163,6 +163,6 @@ SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-in-production")
 BCRYPT_COST: int = 12
 
 # --- JWT Token 过期时间（分钟）---
-# 480 分钟 = 8 小时，覆盖一个工作日
+# 1440 分钟 = 24 小时，对应 API 文档 §4.2
 # 到达过期时间后用户需重新登录
-ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440

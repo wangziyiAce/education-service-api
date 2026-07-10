@@ -92,6 +92,7 @@ engine = create_engine(
     # 当核心连接全部被占用时，最多额外创建 20 条"临时"连接。
     # 总连接数上限 = pool_size + max_overflow = 10 + 20 = 30。
     # 临时连接用完后会被关闭（不回到池中）。
+
     max_overflow=DB_MAX_OVERFLOW,
 
     # --- 连接获取超时 ---
@@ -250,3 +251,13 @@ def init_db() -> None:
     # create_all() 会对 metadata 中每个表执行 CREATE TABLE IF NOT EXISTS
     # 已存在的表不受影响，不会丢数据
     Base.metadata.create_all(bind=engine)
+
+    # --- 执行种子数据 ---
+    # 建表后检查并插入角色、管理员等必要初始数据
+    # 使用独立 Session 避免与请求事务冲突
+    session = SessionLocal()
+    try:
+        from services.student_service import seed_data
+        seed_data(session)
+    finally:
+        session.close()
