@@ -1,201 +1,253 @@
-"""
-智能报告模块 — Pydantic Schema
-===========================================
-请求体与响应体定义，严格对齐:
-  《教育服务系统_API接口设计规范文档_V1.2》第 8 章 — 智能报告模块接口
-  《教育服务系统_数据库设计规范文档_V2.1》第 6.7.1 节 — report_generation 表
+"""智能报告模块 V2 - API Schema。
 
-字段命名原则:
-  JSON 字段名与数据库表字段名严格对齐（snake_case），
-  前端无需做字段名翻译。
+这个文件定义的是 FastAPI 请求体/响应体，不是数据库模型。
 
-Schema 清单:
-  - ReportGenerateRequest    → POST /reports/generate 请求体
-  - ReportResponse           → GET /reports/{id} 响应
-  - ReportListQuery          → GET /reports 查询参数
-  - ReportItem               → 报告列表中的单条记录
+面试时可以这样讲：
+“ORM 负责表结构，Schema 负责接口契约。报告模块 V2 把任务外壳和不同报告类型
+的内容结构拆开，前端可以根据 report_type + schema_version 选择渲染器。”
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional, Any
+from __future__ import annotations
+
 from datetime import date, datetime
+from decimal import Decimal
+from typing import Any, Optional
 
-from schemas.common import PaginationParams
+from pydantic import AliasChoices, BaseModel, Field
 
-
-# ==================== 报告类型常量 ====================
-
-# 严格对齐 report_generation 表的 ENUM 定义
-REPORT_TYPES: list[str] = [
-    "customer_ops",      # 全域客户经营分析
-    "daily_summary",     # 员工日报汇总
-    "weekly_summary",    # 综合周报
-    "psych_weekly",      # 学生心理周报
-    "complaint_weekly",  # 投诉处理周报
-]
-
-# 报告类型中文标签映射
-REPORT_TYPE_LABELS: dict[str, str] = {
-    "customer_ops": "全域客户经营分析",
-    "daily_summary": "员工日报汇总",
-    "weekly_summary": "综合周报",
-    "psych_weekly": "学生心理周报",
-    "complaint_weekly": "投诉处理周报",
-}
+from services.reporting.registry import REPORT_REGISTRY
+from services.reporting.schemas import REPORT_SCHEMA_VERSION
 
 
-# ==================== 请求体 ====================
+REPORT_TYPES: list[str] = list(REPORT_REGISTRY.keys())
+
 
 class ReportGenerateRequest(BaseModel):
-    """
-    触发报告生成请求体（对齐 API 文档 8.2 节）
+    """POST /api/v1/reports/generate 请求体。"""
 
-    字段对齐 report_generation 表:
-      report_type  → report_type (ENUM)
-      report_title → report_title (VARCHAR)
-      period_start → period_start (DATE)
-      period_end   → period_end (DATE)
-    """
-
-    report_type: str = Field(
-        ...,
-        description=f"报告类型: {', '.join(REPORT_TYPES)}",
-        examples=["daily_summary"],
-    )
+    report_type: str = Field(..., description="报告类型编码")
     report_title: str = Field(
         ...,
+        validation_alias=AliasChoices("report_title", "title"),
         min_length=1,
         max_length=255,
-        description="报告标题，如'2026年7月第1周日报汇总'",
-        examples=["2026年7月第1周日报汇总"],
+        description="报告标题；兼容前端传 title，也兼容后端内部字段 report_title",
     )
-    period_start: Optional[date] = Field(
-        default=None,
-        description="统计周期起始日期",
-        examples=["2026-07-01"],
-    )
-    period_end: Optional[date] = Field(
-        default=None,
-        description="统计周期截止日期",
-        examples=["2026-07-07"],
-    )
-
-
-# ==================== 响应体 ====================
-
-class ReportContent(BaseModel):
-    """
-    报告结构化内容（对齐 API 文档 8.3 节）
-
-    对应 report_generation.report_content (JSON) 的结构约束。
-    这是 Dify 生成报告时必须遵循的输出格式。
-    """
-
-    summary: Optional[str] = Field(
-        default=None,
-        description="报告摘要，概括整体情况",
-    )
-    key_findings: Optional[list[str]] = Field(
-        default_factory=list,
-        description="关键发现列表",
-    )
-    risks: Optional[list[str]] = Field(
-        default_factory=list,
-        description="风险预警列表",
-    )
-    suggestions: Optional[list[str]] = Field(
-        default_factory=list,
-        description="改进建议列表",
-    )
-
-
-class ReportResponse(BaseModel):
-    """
-    报告详情响应（对齐 API 文档 8.3 节）
-
-    字段严格对齐 report_generation 表的所有字段。
-    report_content 为 JSON 对象，report_html 为 HTML 字符串。
-    """
-
-    id: int = Field(..., description="报告 ID")
-    report_type: str = Field(..., description="报告类型")
-    report_title: str = Field(..., description="报告标题")
-    report_content: Optional[dict] = Field(
-        default=None,
-        description="报告结构化内容（JSON）",
-    )
-    report_html: Optional[str] = Field(
-        default=None,
-        description="报告 HTML 渲染内容",
-    )
-    period_start: Optional[date] = Field(
-        default=None,
-        description="统计周期起始",
-    )
-    period_end: Optional[date] = Field(
-        default=None,
-        description="统计周期结束",
-    )
-    generated_by: Optional[int] = Field(
-        default=None,
-        description="生成人 ID",
-    )
-    status: str = Field(
-        ...,
-        description="生成状态: generating / completed / failed",
-    )
-    error_message: Optional[str] = Field(
-        default=None,
-        description="失败原因（仅 status=failed 时有值）",
-    )
-    create_time: datetime = Field(..., description="创建时间")
-
-    model_config = {"from_attributes": True}
-
-
-class ReportItem(BaseModel):
-    """
-    报告列表中的单条记录（精简字段，不含大文本）
-
-    列表接口不需要返回 report_content 和 report_html 大字段，
-    前端点击详情时再单独请求 GET /reports/{id} 获取完整内容。
-    """
-
-    id: int = Field(..., description="报告 ID")
-    report_type: str = Field(..., description="报告类型")
-    report_title: str = Field(..., description="报告标题")
-    period_start: Optional[date] = Field(default=None, description="统计周期起始")
+    period_start: Optional[date] = Field(default=None, description="统计周期开始")
     period_end: Optional[date] = Field(default=None, description="统计周期结束")
-    generated_by: Optional[int] = Field(default=None, description="生成人 ID")
-    status: str = Field(..., description="生成状态")
-    error_message: Optional[str] = Field(default=None, description="失败原因")
-    create_time: datetime = Field(..., description="创建时间")
+    filters: dict[str, Any] = Field(default_factory=dict, description="报告筛选条件")
+
+    # 这里开启字段名回填，是为了让调用方既可以传前端友好的 title，
+    # 也可以传数据库/响应一致的 report_title；服务层仍统一读取 report_title。
+    model_config = {"populate_by_name": True}
+
+
+class ReportTaskResponse(BaseModel):
+    """报告任务创建后的轻量响应。"""
+
+    id: int
+    report_type: str
+    report_title: str
+    status: str
+    schema_version: int = REPORT_SCHEMA_VERSION
+    period_start: Optional[date] = None
+    period_end: Optional[date] = None
+    trigger_source: str = "manual"
+    generated_by: Optional[int] = None
+    create_time: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 
 
-# ==================== 列表查询参数 ====================
+class ReportDetailResponse(ReportTaskResponse):
+    """报告详情响应。"""
 
-class ReportListQuery(PaginationParams):
-    """
-    报告列表查询参数（对齐 API 文档 8.1 节）
+    report_content: Optional[dict[str, Any]] = None
+    report_html: Optional[str] = None
+    data_quality: Optional[dict[str, Any]] = None
+    request_filters: Optional[dict[str, Any]] = None
+    aggregated_data_snapshot: Optional[dict[str, Any]] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+    started_time: Optional[datetime] = None
+    completed_time: Optional[datetime] = None
+    retry_of_report_id: Optional[int] = None
+    retry_count: int = 0
 
-    支持按报告类型、状态、时间范围筛选，支持分页。
-    """
 
-    report_type: Optional[str] = Field(
-        default=None,
-        description=f"报告类型筛选: {', '.join(REPORT_TYPES)}",
+class ReportTypeResponse(BaseModel):
+    """GET /api/v1/reports/types 返回的报告类型契约。"""
+
+    report_type: str
+    label: str
+    schema_version: int
+    allowed_roles: list[str]
+    template_name: str
+    default_period_rule: str
+    available_filters: list[str]
+    json_schema: dict[str, Any]
+
+
+class ReportListResponse(BaseModel):
+    items: list[ReportTaskResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class ReportScheduleCreate(BaseModel):
+    report_type: str
+    cron_expression: str = Field(..., description="五段 cron 表达式，例如 0 9 * * 1")
+    enabled: int = 1
+    timezone: str = "Asia/Shanghai"
+    period_rule: str = "previous_week"
+    title_template: Optional[str] = None
+    filters: dict[str, Any] = Field(default_factory=dict)
+    recipients: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReportScheduleUpdate(BaseModel):
+    cron_expression: Optional[str] = None
+    enabled: Optional[int] = None
+    timezone: Optional[str] = None
+    period_rule: Optional[str] = None
+    title_template: Optional[str] = None
+    filters: Optional[dict[str, Any]] = None
+    recipients: Optional[dict[str, Any]] = None
+
+
+class ReportScheduleResponse(ReportScheduleCreate):
+    id: int
+    filters: Optional[dict[str, Any]] = None
+    recipients: Optional[dict[str, Any]] = None
+    created_by: Optional[int] = None
+    last_run_time: Optional[datetime] = None
+    last_status: Optional[str] = None
+    last_error: Optional[str] = None
+    next_run_time: Optional[datetime] = None
+    create_time: Optional[datetime] = None
+    update_time: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class ReportActionCreate(BaseModel):
+    suggestion_text: str = Field(
+        ...,
+        validation_alias=AliasChoices("suggestion_text", "suggestion"),
+        description="从报告建议转成的行动内容；兼容前端传 suggestion",
     )
-    status: Optional[str] = Field(
+    risk_code: Optional[str] = None
+    owner_id: Optional[int] = None
+    due_time: Optional[datetime] = None
+    target_value: Optional[Decimal] = None
+
+    # 与报告标题类似，行动项内部字段叫 suggestion_text，
+    # 但前端表单更常用 suggestion；这里统一在 Schema 层做兼容。
+    model_config = {"populate_by_name": True}
+
+
+class ReportActionUpdate(BaseModel):
+    suggestion_text: Optional[str] = Field(
         default=None,
-        description="状态筛选: generating / completed / failed",
+        validation_alias=AliasChoices("suggestion_text", "suggestion"),
     )
-    start_date: Optional[date] = Field(
+    risk_code: Optional[str] = None
+    owner_id: Optional[int] = None
+    due_time: Optional[datetime] = None
+    status: Optional[str] = None
+    target_value: Optional[Decimal] = None
+    actual_value: Optional[Decimal] = None
+    completed_time: Optional[datetime] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class ReportActionResponse(ReportActionCreate):
+    id: int
+    report_id: int
+    status: str
+    actual_value: Optional[Decimal] = None
+    completed_time: Optional[datetime] = None
+    create_time: Optional[datetime] = None
+    update_time: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class ApplicationMaterialCreate(BaseModel):
+    application_id: int
+    student_id: Optional[int] = None
+    owner_id: Optional[int] = None
+    material_name: str
+    required: int = Field(
+        default=1,
+        validation_alias=AliasChoices("required", "is_required"),
+        description="是否必填；兼容前端传 is_required",
+    )
+    deadline: Optional[date] = None
+    submitted_time: Optional[datetime] = None
+    status: str = "pending"
+
+    model_config = {"populate_by_name": True}
+
+
+class ChannelCostCreate(BaseModel):
+    channel: str
+    cost_date: date = Field(
+        ...,
+        validation_alias=AliasChoices("cost_date", "spend_date"),
+        description="投放/成本日期；兼容前端传 spend_date",
+    )
+    campaign: Optional[str] = None
+    cost_amount: Decimal = Field(
+        ...,
+        validation_alias=AliasChoices("cost_amount", "cost"),
+        description="渠道成本；兼容前端传 cost",
+    )
+
+    model_config = {"populate_by_name": True}
+
+
+class CustomerContractCreate(BaseModel):
+    customer_id: int
+    lead_id: Optional[int] = None
+    channel: Optional[str] = None
+    contract_amount: Decimal
+    signed_time: Optional[datetime] = None
+    status: str = "signed"
+
+
+class CustomerPaymentCreate(BaseModel):
+    contract_id: int
+    payment_amount: Decimal
+    payment_time: Optional[datetime] = Field(
         default=None,
-        description="创建时间起始",
+        validation_alias=AliasChoices("payment_time", "paid_time"),
+        description="回款时间；兼容前端传 paid_time",
     )
-    end_date: Optional[date] = Field(
+    status: str = "paid"
+
+    model_config = {"populate_by_name": True}
+
+
+class CRMLeadStatusUpdate(BaseModel):
+    old_status: Optional[str] = None
+    new_status: str
+    change_reason: Optional[str] = Field(
         default=None,
-        description="创建时间截止",
+        validation_alias=AliasChoices("change_reason", "reason"),
+        description="阶段变更原因；兼容前端传 reason",
     )
+
+    model_config = {"populate_by_name": True}
+
+
+class FeedbackTicketUpdate(BaseModel):
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    category: Optional[str] = None
+    owner_id: Optional[int] = None
+    first_response_time: Optional[datetime] = None
+    resolved_time: Optional[datetime] = None
+    satisfaction_score: Optional[int] = None

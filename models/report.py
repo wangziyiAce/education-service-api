@@ -1,336 +1,187 @@
-"""
-智能报告模块 ORM Model
-===========================================
-这个文件定义了智能报告模块的两张核心表，实现了从"触发报告生成"到
-"AI 生成分析内容"再到"查询报告结果"的完整数据链路。
+"""智能报告模块 V2 - ORM 数据模型。
 
-数据流转过程:
-  1. 用户触发报告 → report_generation（status=generating）
-  2. 后台聚合业务数据 → 组装 Prompt
-  3. 调用 Dify 生成报告 → 保存 report_content + report_html
-  4. 更新状态 → status=completed / failed
+这个文件是智能报告模块的数据底座。V1 只有“报告生成记录”和“定时任务”
+两张表，适合演示，但不适合做管理分析系统。V2 在保留旧能力的基础上补齐：
 
-包含:
-  - ReportGeneration  报告生成记录表（P0，核心表）
-  - ReportSchedule    报告定时任务表（P1，后续增强）
+1. ``report_generation``：每一次生成任务的完整生命周期。
+   它记录谁触发、什么时候开始、是否来自定时计划、是否重试、聚合快照、
+   Schema 版本、错误码和完成时间。
+2. ``report_schedule``：定时报告计划。
+   独立 APScheduler 进程和手动接口都调用同一套编排层，通过“计划 ID + 周期”
+   形成幂等键，避免一个周期重复生成。
+3. 最小事实表：
+   申请材料、CRM 阶段历史、渠道成本、合同、回款、报告行动项。
+   这些表让新增的 5 类高价值报告有可追溯的数据来源。
 
-设计依据:
-  《教育服务系统_数据库设计规范文档_V2.1》
-  - 第 6.7.1 节  report_generation  报告生成记录表
-  - 第 6.9 节    report_schedule    报告定时任务表
-
-核心设计原则:
-  1. 🚫 禁用物理外键 — generated_by 字段逻辑关联 sys_user
-  2. 🔑 主键统一 — 全部 BIGINT UNSIGNED AUTO_INCREMENT
-  3. 📦 JSON 字段 — report_content 用 JSON 存结构化分析结果
-  4. 🤖 AI 输出双存储 — report_content(JSON) + report_html(MEDIUMTEXT)
-  5. 🔄 异步任务模式 — 提交返回 report_id → 后台生成 → 前端轮询
-
-表间关系速查（逻辑关联，非物理外键）:
-  sys_user (1) ──→ (N) report_generation  通过 generated_by 关联
+项目约定：
+-------
+本项目延续“无物理外键”策略。也就是说，字段名会使用 ``customer_id``、
+``owner_id``、``schedule_id`` 这类逻辑关联字段，并创建索引，但不使用
+``ForeignKey``。原因是培训项目后续可能涉及数据导入、拆库、迁移和测试数据
+重建，物理外键会提高耦合度。对应的数据存在性校验放在 Service 层完成。
 """
 
-from datetime import datetime, date          # Python 日期时间
-from typing import Optional                   # Optional[X] = X | None
+from __future__ import annotations
 
-# --- SQLAlchemy 通用类型 ---
-from sqlalchemy import (
-    Date,       # 日期     → MySQL DATE
-    DateTime,   # 日期时间 → MySQL DATETIME
-    Enum,       # 枚举     → MySQL ENUM
-    Index,      # 显式索引
-    Integer,    # 整数     → MySQL INT（TINYINT 用 Integer 替代）
-    JSON,       # JSON     → MySQL JSON（存储结构化数据）
-    String,     # 字符串   → MySQL VARCHAR
-    Text,       # 长文本   → MySQL TEXT
-    func,       # SQL 函数 → func.now() = MySQL NOW()
-)
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Optional
 
-# --- MySQL 特有类型（支持 UNSIGNED）---
+from sqlalchemy import Date, DateTime, Enum, Index, Integer, JSON, Numeric, String, Text, func
 from sqlalchemy.dialects.mysql import BIGINT, MEDIUMTEXT
-
-# --- ORM 声明式映射 ---
 from sqlalchemy.orm import Mapped, mapped_column
 
-# --- 导入 ORM 基类 ---
 from utils.database import Base
 
 
-# ============================================================
-# 一、ReportGeneration — 报告生成记录表
-# ============================================================
-# 表序号: 26  |  MVP 优先级: P0（必须创建）
-# 表名:   report_generation
-# 用途:   记录每次报告生成任务的状态和结果。
-#         采用异步任务模式：创建时 status=generating，
-#         后台任务完成后更新为 completed 或 failed。
-#
-# 报告类型枚举:
-#   customer_ops     = 全域客户经营分析（数据来源: crm_lead, crm_follow_up）
-#   daily_summary    = 员工日报汇总（数据来源: employee_daily_report）
-#   psych_weekly     = 学生心理周报（数据来源: student_psych_record, student_psych_alert）
-#   complaint_weekly = 投诉处理周报（数据来源: student_feedback_ticket）
-#   weekly_summary   = 综合周报（多表聚合）
-#
-# 报告状态流转:
-#   generating → completed（生成成功）
-#   generating → failed（生成失败，记录 error_message）
-#
-# 关联关系:
-#   report_generation.generated_by → sys_user.id（逻辑关联）
-# ============================================================
+REPORT_STATUS_VALUES = ("pending", "generating", "completed", "failed")
+TRIGGER_SOURCE_VALUES = ("manual", "schedule", "retry", "system")
+
 
 class ReportGeneration(Base):
+    """报告生成记录表。
+
+    一条记录对应一次“报告生成尝试”，而不是一个永远被覆盖的报告。
+    这样设计的好处是：
+
+    * 失败原因可以保留下来，便于排查；
+    * 重试会创建新记录，通过 ``retry_of_report_id`` 指向原失败记录；
+    * 定时任务可以通过 ``idempotency_key`` 防止重复触发；
+    * ``aggregated_data_snapshot`` 保存 SQL/规则引擎算出的指标快照，便于追溯。
+
+    隐私边界：
+    ``aggregated_data_snapshot`` 只保存聚合结果，不保存心理咨询原文、投诉原文等
+    敏感长文本。心理报告只允许统计情绪趋势、预警等级、处理时效。
+    """
+
     __tablename__ = "report_generation"
 
-    # ========================================
-    # 字段定义
-    # ========================================
-
-    # --- 主键 ---
     id: Mapped[int] = mapped_column(
         BIGINT(unsigned=True),
         primary_key=True,
         autoincrement=True,
         comment="主键",
     )
-
-    # --- 报告类型 ---
-    # ENUM 限制只能从 5 种报告类型中选择，防止脏数据。
-    # customer_ops     → 全域客户经营分析
-    # daily_summary    → 员工日报汇总
-    # weekly_summary   → 综合周报
-    # psych_weekly     → 学生心理周报
-    # complaint_weekly → 投诉处理周报
     report_type: Mapped[str] = mapped_column(
-        Enum(
-            "customer_ops",
-            "daily_summary",
-            "weekly_summary",
-            "psych_weekly",
-            "complaint_weekly",
-            name="report_generation_report_type",
-        ),
+        String(64),
         nullable=False,
-        comment="报告类型",
+        comment="报告类型编码，V2 改为 VARCHAR 以支持扩展",
     )
-
-    # --- 报告标题 ---
-    # 人类可读的报告标题，如"2026年7月第1周日报汇总"
-    # String(255) 足够存较长的标题
     report_title: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
         comment="报告标题",
     )
-
-    # --- 报告结构化内容（JSON）---
-    # AI 生成的结构化分析结果。
-    # 示例结构:
-    #   {
-    #     "summary": "本周整体工作进展顺利...",
-    #     "key_findings": ["客户咨询量环比增长15%", "签约转化率8.5%"],
-    #     "risks": ["张三客户流失风险较高"],
-    #     "suggestions": ["加强高意向客户跟进频率"]
-    #   }
-    # JSON 类型的好处: 前端可以直接解析展示，Dify 输出格式约束在此字段内。
     report_content: Mapped[Optional[dict]] = mapped_column(
         JSON,
         default=None,
-        comment="报告内容（结构化数据）",
+        comment="按 report_type 区分的结构化报告内容",
     )
-
-    # --- 报告 HTML 内容 ---
-    # Dify 生成的 HTML 格式报告，前端可以直接渲染展示。
-    # MEDIUMTEXT 最大 16MB，足够存带样式的完整报告。
     report_html: Mapped[Optional[str]] = mapped_column(
         MEDIUMTEXT,
         default=None,
-        comment="报告 HTML 渲染内容",
+        comment="后端模板渲染后的 HTML，禁止模型直接输出任意 HTML",
     )
-
-    # --- 统计周期起始日期 ---
-    # 报告覆盖的数据统计起始日期。
-    # 示例: 2026-07-01（周报从周一开始）
     period_start: Mapped[Optional[date]] = mapped_column(
         Date,
         default=None,
-        comment="统计周期起始",
+        comment="统计周期开始日期",
     )
-
-    # --- 统计周期截止日期 ---
-    # 报告覆盖的数据统计截止日期。
-    # 示例: 2026-07-07（周报到周日结束）
     period_end: Mapped[Optional[date]] = mapped_column(
         Date,
         default=None,
-        comment="统计周期结束",
+        comment="统计周期结束日期",
     )
-
-    # --- 生成人 ID（逻辑关联 sys_user）---
-    # 谁触发了这次报告生成。
-    # 可为 NULL（定时任务自动触发时无具体操作人）。
+    status: Mapped[str] = mapped_column(
+        Enum(*REPORT_STATUS_VALUES, name="report_generation_status"),
+        nullable=False,
+        default="pending",
+        comment="任务状态 pending/generating/completed/failed",
+    )
+    schema_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=2,
+        comment="报告内容结构版本；历史数据为 1，新报告为 2",
+    )
+    # ---- 任务来源与重试链路 ----
     generated_by: Mapped[Optional[int]] = mapped_column(
         BIGINT(unsigned=True),
         default=None,
-        comment="生成人 → sys_user（逻辑关联）",
+        comment="触发生成的用户 ID，逻辑关联 sys_user.id",
     )
-
-    # --- 生成状态 ---
-    # generating = 正在生成中（后台任务执行中）
-    # completed  = 生成成功（report_content + report_html 已保存）
-    # failed     = 生成失败（error_message 记录原因）
-    status: Mapped[str] = mapped_column(
-        Enum(
-            "generating",
-            "completed",
-            "failed",
-            name="report_generation_status",
-        ),
+    schedule_id: Mapped[Optional[int]] = mapped_column(
+        BIGINT(unsigned=True),
+        default=None,
+        comment="定时计划 ID，逻辑关联 report_schedule.id",
+    )
+    retry_of_report_id: Mapped[Optional[int]] = mapped_column(
+        BIGINT(unsigned=True),
+        default=None,
+        comment="如果是重试，记录原失败报告 ID",
+    )
+    trigger_source: Mapped[str] = mapped_column(
+        Enum(*TRIGGER_SOURCE_VALUES, name="report_generation_trigger_source"),
         nullable=False,
-        default="generating",
-        comment="生成状态",
+        default="manual",
+        comment="触发来源 manual/schedule/retry/system",
+    )
+    retry_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="当前记录对应第几次尝试；原始任务为 0",
+    )
+    idempotency_key: Mapped[Optional[str]] = mapped_column(
+        String(128),
+        default=None,
+        comment="幂等键；手动接口取请求头，定时任务取 schedule_id+period",
     )
 
-    # --- 失败原因 ---
-    # 当 status = failed 时，记录具体错误原因。
-    # 示例: "Dify 调用超时"、"业务数据聚合失败：CRM 表不可达"
-    # TEXT 最多 65535 字节，足够存详细错误堆栈。
+    # ---- 请求、快照与质量说明 ----
+    request_filters: Mapped[Optional[dict]] = mapped_column(
+        JSON,
+        default=None,
+        comment="生成报告时传入的筛选条件",
+    )
+    aggregated_data_snapshot: Mapped[Optional[dict]] = mapped_column(
+        JSON,
+        default=None,
+        comment="SQL/规则引擎生成的聚合指标快照，不保存心理咨询原文",
+    )
+    data_quality: Mapped[Optional[dict]] = mapped_column(
+        JSON,
+        default=None,
+        comment="数据质量说明：缺失数据源、空数据、降级生成等",
+    )
+
+    # ---- 错误与生命周期时间 ----
+    error_code: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        default=None,
+        comment="机器可读错误码，例如 DIFY_SCHEMA_INVALID",
+    )
     error_message: Mapped[Optional[str]] = mapped_column(
         Text,
         default=None,
-        comment="失败原因",
+        comment="人类可读失败原因",
     )
-
-    # --- 创建时间 ---
-    # ⚠️ 注意：此表只有 create_time，没有 update_time。
-    # 报告一旦生成（completed/failed），内容不再修改。
-    # 如需重新生成，创建一条新记录。
+    started_time: Mapped[Optional[datetime]] = mapped_column(
+        DateTime,
+        default=None,
+        comment="任务真正开始生成的时间",
+    )
+    completed_time: Mapped[Optional[datetime]] = mapped_column(
+        DateTime,
+        default=None,
+        comment="任务完成或失败的时间",
+    )
     create_time: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         server_default=func.now(),
         comment="创建时间",
     )
-
-    # ========================================
-    # 表级约束
-    # ========================================
-    __table_args__ = (
-        # 按报告类型筛选（如"查看所有日报汇总"）
-        Index("idx_report_type", "report_type"),
-        # 按统计周期查询（如"7月第1周的所有报告"）
-        Index("idx_period", "period_start", "period_end"),
-        # 按状态筛选（如"查看所有生成中的报告"）
-        Index("idx_status", "status"),
-        # 按生成人查询（如"我生成的所有报告"）
-        Index("idx_generated_by", "generated_by"),
-        # --- MySQL 表属性 ---
-        {
-            "mysql_engine": "InnoDB",
-            "mysql_charset": "utf8mb4",
-            "mysql_collate": "utf8mb4_unicode_ci",
-            "comment": "报告生成记录表",
-        },
-    )
-
-    def __repr__(self) -> str:
-        return (
-            f"<ReportGeneration(id={self.id}, report_type={self.report_type!r}, "
-            f"status={self.status!r})>"
-        )
-
-
-# ============================================================
-# 二、ReportSchedule — 报告定时任务表
-# ============================================================
-# 表序号: 27  |  MVP 优先级: P1（后续增强）
-# 表名:   report_schedule
-# 用途:   配置定时报告任务，支持日/周定时自动生成报告。
-#
-# 使用场景:
-#   - 每周一早上 9:00 自动生成上周的日报汇总
-#   - 每月 1 号自动生成上月的客户经营分析报告
-#   - 自动将生成的报告发送给指定接收人
-#
-# 注意:
-#   - MVP 阶段建表但不实现定时调度逻辑（使用外部 cron 或 Celery 后续增强）
-#   - 当前仅作为配置表，为 P2 的定时报告功能预留数据模型
-# ============================================================
-
-class ReportSchedule(Base):
-    __tablename__ = "report_schedule"
-
-    # ========================================
-    # 字段定义
-    # ========================================
-
-    # --- 主键 ---
-    id: Mapped[int] = mapped_column(
-        BIGINT(unsigned=True),
-        primary_key=True,
-        autoincrement=True,
-        comment="主键",
-    )
-
-    # --- 报告类型 ---
-    # 与 report_generation.report_type 对应。
-    # 使用 VARCHAR(64) 而非 ENUM，因为后续可能扩展新类型。
-    report_type: Mapped[str] = mapped_column(
-        String(64),
-        nullable=False,
-        comment="报告类型",
-    )
-
-    # --- Cron 表达式 ---
-    # 标准的 5 字段 cron 表达式。
-    # 示例:
-    #   "0 9 * * 1"    = 每周一早上 9:00
-    #   "0 8 1 * *"    = 每月 1 号早上 8:00
-    #   "0 18 * * 5"   = 每周五下午 6:00
-    cron_expression: Mapped[str] = mapped_column(
-        String(64),
-        nullable=False,
-        comment="Cron 表达式",
-    )
-
-    # --- 接收人列表（JSON）---
-    # 报告生成后推送给哪些用户。
-    # 示例: [{"user_id": 1, "channel": "email"}, {"user_id": 2, "channel": "system"}]
-    recipients: Mapped[Optional[dict]] = mapped_column(
-        JSON,
-        default=None,
-        comment="接收人列表",
-    )
-
-    # --- 启用状态 ---
-    # 1 = 启用（定时任务生效）
-    # 0 = 禁用（暂停定时生成）
-    status: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=1,
-        comment="1=启用 0=禁用",
-    )
-
-    # --- 上次执行时间 ---
-    # 记录定时任务最近一次成功执行的时间。
-    # 用于判断下次触发时是否需要补跑。
-    last_run_time: Mapped[Optional[datetime]] = mapped_column(
-        DateTime,
-        default=None,
-        comment="上次执行时间",
-    )
-
-    # --- 创建时间 ---
-    create_time: Mapped[datetime] = mapped_column(
-        DateTime,
-        nullable=False,
-        server_default=func.now(),
-        comment="创建时间",
-    )
-
-    # --- 更新时间 ---
     update_time: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
@@ -339,21 +190,328 @@ class ReportSchedule(Base):
         comment="更新时间",
     )
 
-    # ========================================
-    # 表级约束
-    # ========================================
     __table_args__ = (
-        # --- MySQL 表属性 ---
+        Index("idx_report_generation_type", "report_type"),
+        Index("idx_report_generation_status", "status"),
+        Index("idx_report_generation_period", "period_start", "period_end"),
+        Index("idx_report_generation_generated_by", "generated_by"),
+        Index("idx_report_generation_schedule", "schedule_id"),
+        Index("idx_report_generation_retry_of", "retry_of_report_id"),
+        Index("uk_report_generation_idempotency", "idempotency_key", unique=True),
         {
             "mysql_engine": "InnoDB",
             "mysql_charset": "utf8mb4",
             "mysql_collate": "utf8mb4_unicode_ci",
-            "comment": "报告定时任务表",
+            "comment": "智能报告生成记录表",
         },
     )
 
-    def __repr__(self) -> str:
-        return (
-            f"<ReportSchedule(id={self.id}, report_type={self.report_type!r}, "
-            f"cron={self.cron_expression!r})>"
-        )
+
+class ReportSchedule(Base):
+    """定时报告计划表。
+
+    APScheduler 只负责“按 cron 唤醒”，真正创建报告任务仍走 orchestrator。
+    这样手动生成、重试、定时生成都能复用同一套权限、幂等、聚合、AI、渲染逻辑。
+    """
+
+    __tablename__ = "report_schedule"
+
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True, comment="主键")
+    report_type: Mapped[str] = mapped_column(String(64), nullable=False, comment="报告类型编码")
+    cron_expression: Mapped[str] = mapped_column(String(64), nullable=False, comment="五段 cron 表达式")
+    enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1, comment="1=启用，0=停用")
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Asia/Shanghai", comment="计划时区")
+    period_rule: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="previous_week",
+        comment="统计周期规则 previous_day/previous_week/previous_month",
+    )
+    title_template: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        default=None,
+        comment="标题模板，可使用 {start}/{end}/{report_type}",
+    )
+    filters: Mapped[Optional[dict]] = mapped_column(JSON, default=None, comment="定时任务默认筛选条件")
+    recipients: Mapped[Optional[dict]] = mapped_column(JSON, default=None, comment="通知接收人配置")
+    created_by: Mapped[Optional[int]] = mapped_column(
+        BIGINT(unsigned=True),
+        default=None,
+        comment="创建计划的用户 ID，逻辑关联 sys_user.id",
+    )
+    last_run_time: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None, comment="最近运行时间")
+    last_status: Mapped[Optional[str]] = mapped_column(String(32), default=None, comment="最近运行状态")
+    last_error: Mapped[Optional[str]] = mapped_column(Text, default=None, comment="最近运行错误")
+    next_run_time: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None, comment="下次运行时间")
+    create_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), comment="创建时间")
+    update_time: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+        comment="更新时间",
+    )
+
+    __table_args__ = (
+        Index("idx_report_schedule_type", "report_type"),
+        Index("idx_report_schedule_enabled", "enabled"),
+        Index("idx_report_schedule_next_run", "next_run_time"),
+        {
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+            "comment": "智能报告定时计划表",
+        },
+    )
+
+
+class ApplicationMaterialItem(Base):
+    """申请材料明细表。
+
+    新增 ``application_risk`` 报告需要知道：
+    哪些材料是必填、截止日期是什么、是否已经提交、谁负责。
+    """
+
+    __tablename__ = "application_material_item"
+
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True, comment="主键")
+    application_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment="申请记录 ID")
+    student_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), default=None, comment="学生 ID")
+    owner_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), default=None, comment="负责人 ID")
+    material_name: Mapped[str] = mapped_column(String(128), nullable=False, comment="材料名称")
+    required: Mapped[int] = mapped_column(Integer, nullable=False, default=1, comment="是否必填 1/0")
+    deadline: Mapped[Optional[date]] = mapped_column(Date, default=None, comment="材料截止日期")
+    submitted_time: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None, comment="提交时间")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", comment="pending/submitted/waived")
+    update_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now(), comment="更新时间")
+    create_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), comment="创建时间")
+
+    __table_args__ = (
+        Index("idx_material_application", "application_id"),
+        Index("idx_material_student", "student_id"),
+        Index("idx_material_owner", "owner_id"),
+        Index("idx_material_deadline", "deadline"),
+        {
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+            "comment": "申请材料明细表",
+        },
+    )
+
+
+class CRMLeadStatusHistory(Base):
+    """CRM 阶段变化历史表。
+
+    ``sales_funnel`` 不能只看客户当前状态，还要看客户从哪个阶段流到哪个阶段、
+    每个阶段停留多久、哪个顾问操作了变化。
+    """
+
+    __tablename__ = "crm_lead_status_history"
+
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True, comment="主键")
+    lead_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment="线索/客户 ID")
+    old_status: Mapped[Optional[str]] = mapped_column(String(64), default=None, comment="变更前状态")
+    new_status: Mapped[str] = mapped_column(String(64), nullable=False, comment="变更后状态")
+    operator_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), default=None, comment="操作人 ID")
+    change_reason: Mapped[Optional[str]] = mapped_column(String(255), default=None, comment="变更原因")
+    change_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), comment="变更时间")
+
+    __table_args__ = (
+        Index("idx_lead_status_history_lead", "lead_id"),
+        Index("idx_lead_status_history_time", "change_time"),
+        Index("idx_lead_status_history_operator", "operator_id"),
+        {
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+            "comment": "CRM 客户阶段变化历史表",
+        },
+    )
+
+
+class MarketingChannelCost(Base):
+    """市场渠道成本表。
+
+    ``channel_roi`` 报告的成本必须来自这里，不能由 AI 估算。
+    """
+
+    __tablename__ = "marketing_channel_cost"
+
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True, comment="主键")
+    channel: Mapped[str] = mapped_column(String(64), nullable=False, comment="渠道名称")
+    cost_date: Mapped[date] = mapped_column(Date, nullable=False, comment="投放日期")
+    campaign: Mapped[Optional[str]] = mapped_column(String(128), default=None, comment="活动名称")
+    cost_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0, comment="投放成本")
+    create_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), comment="创建时间")
+
+    __table_args__ = (
+        Index("idx_channel_cost_channel_date", "channel", "cost_date"),
+        {
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+            "comment": "市场渠道投放成本表",
+        },
+    )
+
+
+class CustomerContract(Base):
+    """客户合同表。
+
+    渠道 ROI 不只看签约数量，还要看合同金额和合同状态。
+    """
+
+    __tablename__ = "customer_contract"
+
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True, comment="主键")
+    customer_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment="客户 ID")
+    lead_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), default=None, comment="线索 ID")
+    channel: Mapped[Optional[str]] = mapped_column(String(64), default=None, comment="归因渠道")
+    contract_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0, comment="合同金额")
+    signed_time: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None, comment="签约时间")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="signed", comment="signed/cancelled/refunded")
+    create_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), comment="创建时间")
+    update_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now(), comment="更新时间")
+
+    __table_args__ = (
+        Index("idx_contract_customer", "customer_id"),
+        Index("idx_contract_channel_time", "channel", "signed_time"),
+        Index("idx_contract_status", "status"),
+        {
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+            "comment": "客户合同表",
+        },
+    )
+
+
+class CustomerPayment(Base):
+    """客户回款表。
+
+    ROI 公式使用“实际回款”，不是合同金额，因此需要单独记录付款流水。
+    """
+
+    __tablename__ = "customer_payment"
+
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True, comment="主键")
+    contract_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment="合同 ID")
+    payment_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0, comment="回款金额")
+    payment_time: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None, comment="回款时间")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="paid", comment="paid/refunded/pending")
+    create_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), comment="创建时间")
+
+    __table_args__ = (
+        Index("idx_payment_contract", "contract_id"),
+        Index("idx_payment_time", "payment_time"),
+        Index("idx_payment_status", "status"),
+        {
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+            "comment": "客户回款表",
+        },
+    )
+
+
+class ReportAction(Base):
+    """报告行动项表。
+
+    AI 报告只给“建议”还不够，管理闭环需要把建议转成行动：
+    谁负责、什么时候完成、完成结果如何、目标值是否达成。
+    """
+
+    __tablename__ = "report_action"
+
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True, comment="主键")
+    report_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment="报告 ID")
+    suggestion_text: Mapped[str] = mapped_column(Text, nullable=False, comment="报告建议内容")
+    risk_code: Mapped[Optional[str]] = mapped_column(String(64), default=None, comment="风险编码，用于识别重复问题")
+    owner_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), default=None, comment="责任人 ID")
+    due_time: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None, comment="截止时间")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", comment="pending/confirmed/done/cancelled")
+    target_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), default=None, comment="目标值")
+    actual_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), default=None, comment="实际结果")
+    completed_time: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None, comment="完成时间")
+    create_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), comment="创建时间")
+    update_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now(), comment="更新时间")
+
+    __table_args__ = (
+        Index("idx_report_action_report", "report_id"),
+        Index("idx_report_action_owner", "owner_id"),
+        Index("idx_report_action_status", "status"),
+        Index("idx_report_action_risk_code", "risk_code"),
+        {
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+            "comment": "报告行动闭环表",
+        },
+    )
+
+
+class StudentFeedbackTicket(Base):
+    """投诉/反馈工单最小模型。
+
+    原计划要求给投诉工单增加 ``first_response_time`` 和 ``resolved_time``。
+    本模型保留最小字段，既能支持 SLA 报告，也能给维护接口做演示。
+    """
+
+    __tablename__ = "student_feedback_ticket"
+
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True, comment="主键")
+    student_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), default=None, comment="学生 ID")
+    ticket_type: Mapped[str] = mapped_column(String(32), nullable=False, default="complaint", comment="工单类型")
+    category: Mapped[Optional[str]] = mapped_column(String(64), default=None, comment="问题分类")
+    priority: Mapped[str] = mapped_column(String(32), nullable=False, default="medium", comment="urgent/high/medium/low")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="open", comment="open/processing/resolved/closed")
+    content: Mapped[Optional[str]] = mapped_column(Text, default=None, comment="投诉内容，报告快照不保存该原文")
+    first_response_time: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None, comment="首次响应时间")
+    resolved_time: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None, comment="解决时间")
+    satisfaction_score: Mapped[Optional[int]] = mapped_column(Integer, default=None, comment="满意度评分")
+    owner_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), default=None, comment="处理人 ID")
+    create_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), comment="创建时间")
+    update_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now(), comment="更新时间")
+
+    __table_args__ = (
+        Index("idx_feedback_ticket_status", "status"),
+        Index("idx_feedback_ticket_priority", "priority"),
+        Index("idx_feedback_ticket_create_time", "create_time"),
+        {
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+            "comment": "学生投诉反馈工单表",
+        },
+    )
+
+
+class StudentPsychAlert(Base):
+    """心理预警最小模型。
+
+    报告只能统计风险等级、状态和跟进时效，不能把学生原文传入快照或 Dify。
+    """
+
+    __tablename__ = "student_psych_alert"
+
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True, comment="主键")
+    student_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), default=None, comment="学生 ID")
+    risk_level: Mapped[str] = mapped_column(String(32), nullable=False, default="medium", comment="low/medium/high")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", comment="pending/following/resolved")
+    first_follow_time: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None, comment="首次跟进时间")
+    owner_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), default=None, comment="跟进负责人 ID")
+    create_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), comment="创建时间")
+    update_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now(), comment="更新时间")
+
+    __table_args__ = (
+        Index("idx_psych_alert_level", "risk_level"),
+        Index("idx_psych_alert_status", "status"),
+        Index("idx_psych_alert_create_time", "create_time"),
+        {
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+            "comment": "学生心理预警表",
+        },
+    )
