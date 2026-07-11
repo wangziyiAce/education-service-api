@@ -40,10 +40,13 @@ from contextlib import asynccontextmanager
 
 # --- FastAPI 框架 ---
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 # --- 项目内部模块 ---
 from config import APP_NAME, APP_VERSION, APP_DEBUG   # 应用元信息
+from routers.crm import crm_router, employee_router
 from utils.database import init_db                     # 数据库建表函数
+from services.crm_service import BizError             # 业务异常基类（统一异常处理）
 
 
 # ============================================================
@@ -108,6 +111,21 @@ app = FastAPI(
 
 
 # ============================================================
+# 业务异常统一处理器
+# ============================================================
+# services/crm_service 中定义的 BizError 及其子类（ParamError / NotFoundError /
+# RefNotFoundError / StateError / ConflictError）统一在此转换为 JSON 错误响应，
+# 保证客户端拿到结构化的 {code, message, data} 以及正确的 HTTP 状态码。
+@app.exception_handler(BizError)
+def biz_error_handler(request, exc: BizError):
+    """把业务异常转成统一 JSON 错误体"""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"code": exc.code, "message": exc.message, "data": None},
+    )
+
+
+# ============================================================
 # 三、健康检查接口
 # ============================================================
 # 这是一个很简单的端点，用于:
@@ -147,6 +165,24 @@ def health_check():
 # 后续模块在 routers/__init__.py 中取消注释即可启用。
 # ============================================================
 
+# --- 路由注册 ---
+# 队友注册的企业助手 / 学生助手 / 智能报告 / 客服Agent 路由
+from routers.crm import crm_router, employee_router
+from routers.assistant import router as assistant_router
+from routers.tools import router as tools_router
+from routers.report import router as report_router
+from routers import student
+from routers import student_chat
+
+app.include_router(crm_router,      prefix="/api/v1/crm",      tags=["企业助手"])
+app.include_router(employee_router, prefix="/api/v1/employee", tags=["员工日报"])
+app.include_router(assistant_router, prefix="/api/v1",          tags=["智能助手"])
+app.include_router(student.router, prefix="/api/v1/student", tags=["学生智能助手"])
+app.include_router(student_chat.router, prefix="/api/v1")
+app.include_router(report_router,    prefix="/api/v1/report",  tags=["智能报告"])
+app.include_router(tools_router,    prefix="/api/v1",           tags=["基础设施"])
+
+# 你的客户研判模块 — 使用 routers/__init__.py 中的 register_routers 注册
 from routers import register_routers
 
 register_routers(app)

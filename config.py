@@ -161,7 +161,7 @@ DIFY_API_KEY: str = os.getenv("DIFY_API_KEY", "")
 # --- LLM API 地址 ---
 # DeepSeek:  https://api.deepseek.com/v1
 # 通义千问:  https://dashscope.aliyuncs.com/compatible-mode/v1
-LLM_API_URL: str = os.getenv("LLM_API_URL", "")
+LLM_API_URL: str = os.getenv("LLM_API_URL", "https://api.deepseek.com/v1")
 
 # --- LLM API Key ---
 LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
@@ -171,6 +171,11 @@ LLM_MODEL: str = os.getenv("LLM_MODEL", "deepseek-chat")
 
 # --- LLM 请求超时（秒）---
 LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "120"))
+
+# --- 通义千问 API Key（学生智能助手 student_chat 模块使用）---
+# 兼容阿里云 DashScope 的 Qwen 系列模型。
+# 留空时 Qwen 不可用，应用仍可正常启动。
+DASHSCOPE_API_KEY: str = os.getenv("DASHSCOPE_API_KEY", "")
 
 
 # ============================================================
@@ -216,3 +221,5 @@ BCRYPT_COST: int = 12
 # 1440 分钟 = 24 小时，对应 API 文档 §4.2
 # 到达过期时间后用户需重新登录
 ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+
+

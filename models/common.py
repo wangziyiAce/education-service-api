@@ -53,14 +53,65 @@ from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 # --- SQLAlchemy ---
-from sqlalchemy.orm import Session
+from sqlalchemy import BigInteger, Column, DateTime, func
+from sqlalchemy.orm import Session, declared_attr
 
 # --- 项目内部 ---
 from config import SECRET_KEY, BCRYPT_COST, ACCESS_TOKEN_EXPIRE_MINUTES
-from utils.database import get_db
+from utils.database import Base, get_db
+
+
+# ============================================================
+# 共享 ORM 基类（供客服 Agent / 企业助手等模块共用）
+# ============================================================
+
+class BigIntPrimaryKey:
+    """统一主键列：BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"""
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="主键")
+
+
+class TimestampMixin:
+    """创建时间 Mixin"""
+    create_time = Column(DateTime, default=datetime.now, nullable=False, comment="创建时间")
+
+
+class UpdateMixin(TimestampMixin):
+    """创建+更新时间 Mixin"""
+    update_time = Column(
+        DateTime, default=datetime.now, onupdate=datetime.now,
+        nullable=False, comment="更新时间",
+    )
 
 # 日志实例
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# 第零部分：ORM 公共列定义 & Mixin
+# ============================================================
+# 供 models/chat.py 等使用旧式 Column() 风格的 Model 复用。
+# models/crm.py 使用新式 mapped_column()，不需要这两个定义。
+# ============================================================
+
+# BIGINT UNSIGNED AUTO_INCREMENT 主键的快捷定义
+# 用法: id = Column(BigIntPrimaryKey, primary_key=True, autoincrement=True)
+BigIntPrimaryKey = BigInteger().with_variant(
+    __import__("sqlalchemy.dialects.mysql", fromlist=["BIGINT"]).BIGINT(unsigned=True),
+    "mysql",
+)
+
+
+class TimestampMixin:
+    """create_time + update_time 通用 Mixin，供旧式 Column() Model 继承。"""
+
+    @declared_attr
+    def create_time(cls):
+        return Column(DateTime, nullable=False, server_default=func.now(), comment="创建时间")
+
+    @declared_attr
+    def update_time(cls):
+        return Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now(), comment="更新时间")
+
 
 # ============================================================
 # 第一部分：统一响应格式工具
