@@ -1,0 +1,16 @@
+
+> frontend@0.0.0 dev
+> vite --host 127.0.0.1 --port 4173
+
+[2m16:18:32[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m Re-optimizing dependencies because vite config has changed
+Port 4173 is in use, trying another one...
+
+  [32m[1mVITE[22m v8.1.4[39m  [2mready in [0m[1m292[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m4174[22m/[39m
+[2m16:20:34[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css, /src/router/ManagementRoute.tsx, /src/pages/StudentJourneyPage.tsx, /src/App.tsx, /src/router/RoleLanding.tsx, /src/pages/LoginPage.tsx, /src/components/layout/Sidebar.tsx[22m
+[2m16:20:34[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css, /src/App.tsx, /src/router/RoleLanding.tsx, /src/pages/LoginPage.tsx[22m
+[2m16:20:34[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css, /src/router/RoleRoute.tsx, /src/router/RoleLanding.tsx, /src/router/ManagementRoute.tsx, /src/router/ProtectedRoute.tsx, /src/pages/LoginPage.tsx, /src/pages/DashboardPage.tsx, /src/pages/StudentJourneyPage.tsx, /src/pages/EnterpriseWorkbenchPage.tsx, /src/pages/CustomerAssessmentPage.tsx, /src/components/layout/TopHeader.tsx, /src/components/layout/Sidebar.tsx[22m
+[2m16:20:34[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css, /src/router/ProtectedRoute.tsx[22m
+[2m16:23:53[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css, /src/pages/StudentJourneyPage.tsx[22m
+[2m16:23:53[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/index.css, /src/pages/CustomerServicePage.tsx[22m

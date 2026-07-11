@@ -34,8 +34,20 @@ for (const marker of ['RoleRoute', 'UserManagementPage', "path: 'admin/users'"])
 }
 
 const roles = await readFile(new URL('src/lib/role-navigation.ts', root), 'utf8')
-for (const rule of ["student: '/student-assistant'", "employee: '/enterprise-assistant'", "team_leader: '/enterprise-assistant'"]) {
+for (const rule of [
+  "admin: '/dashboard'",
+  "manager: '/dashboard'",
+  "employee: '/enterprise-assistant'",
+  "team_leader: '/enterprise-assistant'",
+  "student: '/student-assistant'",
+]) {
   if (!roles.includes(rule)) throw new Error(`missing role landing rule: ${rule}`)
+}
+for (const marker of ['studentPortalRoutes', 'staffPortalRoutes', 'managementPortalRoutes', 'canAccessPortalRoute', 'normalizeRoleCode']) {
+  if (!roles.includes(marker)) throw new Error(`missing explicit portal access rule: ${marker}`)
+}
+for (const restrictedPath of ["'/reports'", "'/enterprise-assistant'", "'/admin/api-diagnostics'"]) {
+  if (!roles.includes(restrictedPath)) throw new Error(`missing protected portal path: ${restrictedPath}`)
 }
 
 const login = await readFile(new URL('src/pages/LoginPage.tsx', root), 'utf8')
@@ -43,8 +55,19 @@ if (!login.includes('getDefaultRoute')) throw new Error('login must redirect by 
 
 const authStore = await readFile(new URL('src/stores/auth-store.ts', root), 'utf8')
 if (!authStore.includes('const currentUser = await getMeApi()')) throw new Error('login must refresh /auth/me before role redirect')
+if (!authStore.includes('normalizeRoleCode')) throw new Error('auth store must normalize legacy user_type when role_code is absent')
 
 const sidebar = await readFile(new URL('src/components/layout/Sidebar.tsx', root), 'utf8')
 if (!sidebar.includes("to: '/admin/api-diagnostics'")) throw new Error('API diagnostics must be admin-only navigation')
+
+const studentPortal = await readFile(new URL('src/pages/StudentJourneyPage.tsx', root), 'utf8')
+for (const marker of ['真实数据边界', '接口未开放', 'min-w-0']) {
+  if (!studentPortal.includes(marker)) throw new Error(`missing student portal UX boundary: ${marker}`)
+}
+
+const customerService = await readFile(new URL('src/pages/CustomerServicePage.tsx', root), 'utf8')
+for (const marker of ['aria-busy', '暂无匹配课程', '暂无近期活动', 'sm:flex-row']) {
+  if (!customerService.includes(marker)) throw new Error(`missing customer service responsive state: ${marker}`)
+}
 
 console.log('editorial portal structure verified')
