@@ -181,11 +181,6 @@ LLM_MODEL: str = os.getenv("LLM_MODEL", "deepseek-chat")
 # --- LLM 请求超时（秒）---
 LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "120"))
 
-# --- 通义千问 API Key（学生智能助手 student_chat 模块使用）---
-# 兼容阿里云 DashScope 的 Qwen 系列模型。
-# 留空时 Qwen 不可用，应用仍可正常启动。
-DASHSCOPE_API_KEY: str = os.getenv("DASHSCOPE_API_KEY", "")
-
 
 # ============================================================
 # 七、产品线规则文件路径
@@ -240,3 +235,12 @@ DASHSCOPE_API_KEY: str = os.getenv("DASHSCOPE_API_KEY", "")
 
 # LLM 模型选择: qwen-turbo(极速) / qwen-plus(均衡推荐) / qwen-max(最强)
 LLM_MODEL: str = os.getenv("LLM_MODEL", "qwen-plus")
+
+# ============================================================
+# 九、文件上传配置
+# ============================================================
+# 上传文件保存目录（相对于项目根目录，或绝对路径）
+UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "uploads/profiles")
+# 上传文件大小上限（字节）
+MAX_UPLOAD_SIZE: int = int(os.getenv("MAX_UPLOAD_SIZE", str(10 * 1024 * 1024)))
+

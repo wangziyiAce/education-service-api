@@ -243,7 +243,7 @@ def init_db() -> None:
     import models.crm      # noqa: F401  注册 profile_rule / customer_source / customer_profile
 
     # ★ 后续新增模块示例（取消注释并替换为实际的模块名）:
-    import models.student   # noqa: F401
+    # import models.student   # noqa: F401
     # import models.knowledge # noqa: F401
     # import models.report    # noqa: F401
 
