@@ -27,6 +27,20 @@
 """
 
 import os  # 读取操作系统环境变量
+from pathlib import Path
+from dotenv import load_dotenv
+
+# 加载 .env 文件
+load_dotenv(Path(__file__).parent / ".env")
+
+# --- 加载 .env 文件（必须先于所有 os.getenv() 调用）---
+import os as _os
+from pathlib import Path as _Path
+from dotenv import load_dotenv as _load_dotenv
+
+# 从当前文件位置向上找项目根目录的 .env
+_env_path = _Path(__file__).resolve().parent / ".env"
+_load_dotenv(_env_path)
 
 
 # ============================================================
@@ -145,14 +159,64 @@ DIFY_API_KEY: str = os.getenv("DIFY_API_KEY", "")
 
 
 # ============================================================
-# 六、安全配置
+# 六、LLM 直调配置（绕过 Dify，直接调用模型 API）
+# ============================================================
+# 使用 OpenAI 兼容的 /v1/chat/completions 格式。
+# DeepSeek、通义千问、GLM 等国产模型均兼容此格式。
+#
+# ⚠️ API Key 通过 .env 文件或环境变量传入，不硬编码！
+# .env 已在 .gitignore 中排除，提交 GitHub 不会泄露。
+
+# --- LLM API 地址 ---
+# DeepSeek:  https://api.deepseek.com/v1
+# 通义千问:  https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_API_URL: str = os.getenv("LLM_API_URL", "https://api.deepseek.com/v1")
+
+# --- LLM API Key ---
+LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
+
+# --- LLM 模型名称 ---
+LLM_MODEL: str = os.getenv("LLM_MODEL", "deepseek-chat")
+
+# --- LLM 请求超时（秒）---
+LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "120"))
+
+# --- 通义千问 API Key（学生智能助手 student_chat 模块使用）---
+# 兼容阿里云 DashScope 的 Qwen 系列模型。
+# 留空时 Qwen 不可用，应用仍可正常启动。
+DASHSCOPE_API_KEY: str = os.getenv("DASHSCOPE_API_KEY", "")
+
+
+# ============================================================
+# 七、产品线规则文件路径
+# ============================================================
+# 客户研判模块从 .md 文件读取产品线匹配规则和产品目录。
+# 修改 .md 文件即可更新规则，无需改代码。
+
+PRODUCT_RULES_PATH: str = os.getenv(
+    "PRODUCT_RULES_PATH",
+    r"C:\Users\Windows\Desktop\产品线匹配规则.md",
+)
+PRODUCT_CATALOG_PATH: str = os.getenv(
+    "PRODUCT_CATALOG_PATH",
+    r"C:\Users\Windows\Desktop\全产品线目录.md",
+)
+
+
+# ============================================================
+# 八、安全配置
 # ============================================================
 # --- JWT 签名密钥 ---
-# 用于生成和验证登录 Token。修改后所有已签发的 Token 立即失效。
-# ⚠️ 默认值仅用于开发！生产环境务必:
-#    1. 生成一个随机长字符串（如 openssl rand -hex 32 的输出）
-#    2. 通过环境变量 SECRET_KEY 传入
 SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-in-production")
+
+# --- Dify 服务令牌 ---
+# 用于 Dify HTTP 节点调用 FastAPI 时的鉴权（对应 API 文档第 10 章）
+# 生成方式: python -c "import secrets; print(secrets.token_hex(32))"
+# ⚠️ 不要提交到 Git！生产环境通过环境变量覆盖
+DIFY_SERVICE_TOKEN: str = os.getenv(
+    "DIFY_SERVICE_TOKEN",
+    "d88d70a2a80921cac932aab7efdcd723b1604f175e1b3e41b6f72900d68b0598",
+)
 
 # --- 密码哈希成本因子 ---
 # bcrypt 的核心参数，控制哈希计算复杂度。
@@ -166,3 +230,13 @@ BCRYPT_COST: int = 12
 # 1440 分钟 = 24 小时，对应 API 文档 §4.2
 # 到达过期时间后用户需重新登录
 ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+
+# ============================================================
+# 七、通义千问 (Qwen) 大模型配置
+# ============================================================
+# 阿里云百炼 API Key
+# 申请地址: https://dashscope.console.aliyun.com/
+DASHSCOPE_API_KEY: str = os.getenv("DASHSCOPE_API_KEY", "")
+
+# LLM 模型选择: qwen-turbo(极速) / qwen-plus(均衡推荐) / qwen-max(最强)
+LLM_MODEL: str = os.getenv("LLM_MODEL", "qwen-plus")

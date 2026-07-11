@@ -1056,3 +1056,189 @@ class EmployeeDailyReport(Base):
             f"<EmployeeDailyReport(id={self.id}, employee_id={self.employee_id}, "
             f"report_date={self.report_date!r})>"
         )
+
+
+# ============================================================
+# 七、AssistantSession — 智能助手会话表
+# ============================================================
+# 表名:   assistant_session
+# 用途:   记录员工与智能助手的对话会话，支持多轮对话上下文管理。
+#
+# 关联关系（逻辑关联，非物理外键）:
+#   assistant_session.employee_id → sys_user.id（发起员工）
+#
+# 设计说明:
+#   - session_id 是面向前端的会话标识（UUID 格式）
+#   - status 控制会话生命周期（active/closed）
+#   - 每个员工可以同时有多个 active 会话（多窗口场景）
+# ============================================================
+
+class AssistantSession(Base):
+    """智能助手会话表"""
+
+    __tablename__ = "assistant_session"
+
+    # --- 主键 ---
+    id: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True),
+        primary_key=True,
+        autoincrement=True,
+        comment="主键",
+    )
+
+    # --- 会话 ID（UUID 格式，面向前端）---
+    session_id: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        comment="会话唯一标识（UUID）",
+    )
+
+    # --- 员工 ID（逻辑关联 sys_user）---
+    employee_id: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True),
+        nullable=False,
+        comment="发起员工 ID → sys_user（逻辑关联）",
+    )
+
+    # --- 会话状态 ---
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="active",
+        comment="会话状态: active/closed",
+    )
+
+    # --- 创建时间 ---
+    create_time: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+        comment="创建时间",
+    )
+
+    # --- 最后消息时间 ---
+    last_message_time: Mapped[Optional[datetime]] = mapped_column(
+        DateTime,
+        default=None,
+        comment="最后消息时间",
+    )
+
+    # ========================================
+    # 表级约束
+    # ========================================
+    __table_args__ = (
+        Index("idx_employee_id", "employee_id"),
+        Index("idx_session_id", "session_id"),
+        Index("idx_status", "status"),
+        {"comment": "智能助手会话表"},
+    )
+
+    def __repr__(self) -> str:
+        return f"<AssistantSession(session_id={self.session_id!r}, employee_id={self.employee_id})>"
+
+
+# ============================================================
+# 八、AssistantMessage — 智能助手消息表
+# ============================================================
+# 表名:   assistant_message
+# 用途:   记录会话中的每一条消息（用户输入 + 助手回复），用于上下文管理和审计。
+#
+# 关联关系（逻辑关联，非物理外键）:
+#   assistant_message.session_id → assistant_session.session_id
+#
+# 设计说明:
+#   - role 区分消息来源（user/assistant/system）
+#   - action_type 记录本轮走的路径（text/sql/api）
+#   - action_detail 存储 SQL 语句或 API 调用参数（JSON 格式）
+#   - action_result 存储 SQL 查询结果或 API 返回数据（JSON 格式）
+#   - tokens_used 用于成本统计
+# ============================================================
+
+class AssistantMessage(Base):
+    """智能助手消息表"""
+
+    __tablename__ = "assistant_message"
+
+    # --- 主键 ---
+    id: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True),
+        primary_key=True,
+        autoincrement=True,
+        comment="主键",
+    )
+
+    # --- 会话 ID（逻辑关联 assistant_session.session_id）---
+    session_id: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        comment="所属会话 ID → assistant_session.session_id（逻辑关联）",
+    )
+
+    # --- 消息角色 ---
+    role: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        comment="消息角色: user/assistant/system",
+    )
+
+    # --- 消息内容 ---
+    content: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="消息文本内容",
+    )
+
+    # --- 动作类型 ---
+    action_type: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        default=None,
+        comment="本轮动作类型: text（闲聊）/sql（NL2SQL）/api（NL2API）",
+    )
+
+    # --- 动作详情（JSON）---
+    # SQL 模式：存储生成的 SQL 语句
+    # API 模式：存储调用的 API 名称和参数
+    action_detail: Mapped[Optional[dict]] = mapped_column(
+        JSON,
+        default=None,
+        comment="动作详情（SQL 语句或 API 调用参数）",
+    )
+
+    # --- 动作结果（JSON）---
+    # SQL 模式：查询结果集
+    # API 模式：API 返回数据
+    action_result: Mapped[Optional[dict]] = mapped_column(
+        JSON,
+        default=None,
+        comment="动作结果（SQL 查询结果或 API 返回数据）",
+    )
+
+    # --- Token 消耗 ---
+    tokens_used: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        default=None,
+        comment="本轮 LLM 调用消耗的 Token 数",
+    )
+
+    # --- 创建时间 ---
+    create_time: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+        comment="创建时间",
+    )
+
+    # ========================================
+    # 表级约束
+    # ========================================
+    __table_args__ = (
+        Index("idx_session_id", "session_id"),
+        Index("idx_role", "role"),
+        Index("idx_action_type", "action_type"),
+        Index("idx_create_time", "create_time"),
+        {"comment": "智能助手消息表"},
+    )
+
+    def __repr__(self) -> str:
+        return f"<AssistantMessage(session_id={self.session_id!r}, role={self.role!r}, action_type={self.action_type!r})>"
+
