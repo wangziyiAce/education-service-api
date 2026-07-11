@@ -118,7 +118,7 @@ class StudentInfo(Base, UpdateMixin):
     __table_args__ = (
         Index("uk_user_id", "user_id", unique=True),
         Index("idx_class_teacher_id", "class_teacher_id"),
-        Index("idx_student_info_status", "status"),
+        Index("idx_status", "status"),
         {"comment": "学生信息扩展表（与 sys_user 1:1）"},
     )
 
@@ -168,13 +168,9 @@ class StudentScore(Base, TimestampMixin):
         BigInteger,
         comment="录入人ID → sys_user.id（逻辑关联）"
     )
-    exam_date = Column(
-        String(10),
-        comment="考试日期"
-    )
 
     __table_args__ = (
-        Index("idx_student_score_student_id", "student_id"),
+        Index("idx_student_id", "student_id"),
         Index("idx_semester", "semester"),
         {"comment": "学生成绩表"},
     )
@@ -256,8 +252,8 @@ class StudentAdminService(Base, UpdateMixin):
     )
 
     __table_args__ = (
-        Index("idx_student_admin_service_student_id", "student_id"),
-        Index("idx_student_admin_service_status", "status"),
+        Index("idx_student_id", "student_id"),
+        Index("idx_status", "status"),
         Index("idx_service_type", "service_type"),
         Index("idx_approver_id", "approver_id"),
         {"comment": "学生行政服务表（请假等）"},
@@ -319,7 +315,7 @@ class StudentPsychProfile(Base, UpdateMixin):
 
     __table_args__ = (
         Index("uk_student_id", "student_id", unique=True),
-        Index("idx_student_psych_profile_risk_level", "risk_level"),
+        Index("idx_risk_level", "risk_level"),
         {"comment": "心理健康画像表（与学生 1:1）"},
     )
 
@@ -443,9 +439,9 @@ class StudentPsychAlert(Base, UpdateMixin):
     )
 
     __table_args__ = (
-        Index("idx_student_psych_alert_student_id", "student_id"),
-        Index("idx_student_psych_alert_risk_level", "risk_level"),
-        Index("idx_student_psych_alert_status", "status"),
+        Index("idx_student_id", "student_id"),
+        Index("idx_risk_level", "risk_level"),
+        Index("idx_status", "status"),
         Index("idx_teacher_id", "teacher_id"),
         {"comment": "心理预警表"},
     )
@@ -536,8 +532,8 @@ class StudentFeedbackTicket(Base, UpdateMixin):
     )
 
     __table_args__ = (
-        Index("idx_student_feedback_ticket_student_id", "student_id"),
-        Index("idx_student_feedback_ticket_status", "status"),
+        Index("idx_student_id", "student_id"),
+        Index("idx_status", "status"),
         Index("idx_category", "category"),
         Index("idx_assignee_id", "assignee_id"),
         Index("idx_priority_status", "priority", "status"),
@@ -606,9 +602,9 @@ class ApplicationProgress(Base, UpdateMixin):
     )
 
     __table_args__ = (
-        Index("idx_application_progress_student_id", "student_id"),
+        Index("idx_student_id", "student_id"),
         Index("idx_stage", "stage"),
-        Index("idx_application_progress_deadline", "deadline"),
+        Index("idx_deadline", "deadline"),
         {"comment": "留学申请进度追踪表"},
     )
 
@@ -673,9 +669,9 @@ class AcademicDeadline(Base, UpdateMixin):
     )
 
     __table_args__ = (
-        Index("idx_academic_deadline_student_id", "student_id"),
-        Index("idx_academic_deadline_deadline", "deadline"),
-        Index("idx_academic_deadline_status", "status"),
+        Index("idx_student_id", "student_id"),
+        Index("idx_deadline", "deadline"),
+        Index("idx_status", "status"),
         {"comment": "学业关键节点/DDL表"},
     )
 
@@ -740,7 +736,7 @@ class StudentNotification(Base, UpdateMixin):
     )
 
     __table_args__ = (
-        Index("idx_student_notification_student_id", "student_id"),
+        Index("idx_student_id", "student_id"),
         Index("idx_is_read", "is_read"),
         Index("idx_create_time", "create_time"),
         {"comment": "学生通知中心表"},
@@ -800,7 +796,7 @@ class StudentIntentTag(Base, UpdateMixin):
     )
 
     __table_args__ = (
-        Index("idx_student_intent_tag_student_id", "student_id"),
+        Index("idx_student_id", "student_id"),
         Index("idx_intent_type", "intent_type"),
         {"comment": "学生意向标签表（增值转化）"},
     )

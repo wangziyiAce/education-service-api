@@ -4,121 +4,9 @@
 """
 from __future__ import annotations
 
-from typing import Any, Literal, Optional, List
+from typing import Literal, Optional, List
 from datetime import date, datetime
 from pydantic import BaseModel, Field
-
-
-# ==================== 客户画像研判 ====================
-
-class ProfileRuleCreate(BaseModel):
-    """创建画像研判规则的请求体。
-
-    管理端将产品线、匹配条件和 AI 提示词提交给客户研判模块；规则内容随后会
-    作为 Dify 工作流的输入。``rule_content`` 保持 JSON 结构，便于不同产品线
-    按需扩展条件而不修改数据库字段。
-    """
-
-    product_line: str = Field(..., min_length=1, max_length=64, description="规则适用的产品线")
-    rule_name: str = Field(..., min_length=1, max_length=128, description="便于运营人员识别的规则名称")
-    rule_content: dict[str, Any] = Field(..., description="学历、年龄、语言成绩等结构化匹配条件")
-    match_prompt: Optional[str] = Field(default=None, description="调用 AI 时附带的系统提示词")
-    priority: int = Field(default=0, description="数值越大，自动研判时越优先匹配")
-
-
-class ProfileRuleUpdate(BaseModel):
-    """局部更新画像规则的请求体。
-
-    所有字段都可选，Service 层会通过 ``exclude_unset=True`` 只更新前端实际提交的
-    字段；不这样处理会把未填写字段错误覆盖为默认值。
-    """
-
-    product_line: Optional[str] = Field(default=None, min_length=1, max_length=64)
-    rule_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
-    rule_content: Optional[dict[str, Any]] = None
-    match_prompt: Optional[str] = None
-    priority: Optional[int] = None
-    status: Optional[int] = Field(default=None, ge=0, le=1, description="1 表示启用，0 表示停用")
-
-
-class ProfileRuleResponse(BaseModel):
-    """画像规则的响应结构，对应 ``profile_rule`` 表的一条可管理配置。"""
-
-    id: int
-    product_line: str
-    rule_name: str
-    rule_content: dict[str, Any]
-    match_prompt: Optional[str] = None
-    priority: int
-    status: int
-    create_time: datetime
-    update_time: datetime
-
-    model_config = {"from_attributes": True}
-
-
-class CustomerSourceResponse(BaseModel):
-    """客户资料来源响应，用于上传后的追溯与待研判列表展示。"""
-
-    id: int
-    source_type: str
-    raw_content: Optional[str] = None
-    file_url: Optional[str] = None
-    file_name: Optional[str] = None
-    parse_status: str
-    parse_result: Optional[dict[str, Any]] = None
-    parse_error: Optional[str] = None
-    operator_id: Optional[int] = None
-    create_time: datetime
-
-    model_config = {"from_attributes": True}
-
-
-class CustomerProfileResponse(BaseModel):
-    """AI 研判输出的客户画像响应，对应 ``customer_profile`` 表。"""
-
-    id: int
-    customer_name: Optional[str] = None
-    contact_info: Optional[str] = None
-    source_id: Optional[int] = None
-    background_info: Optional[dict[str, Any]] = None
-    match_result: Optional[str] = None
-    matched_product: Optional[str] = None
-    match_score: Optional[float] = None
-    match_reason: Optional[str] = None
-    recommended_programs: Optional[Any] = None
-    evaluator_id: Optional[int] = None
-    create_time: datetime
-    update_time: datetime
-
-    model_config = {"from_attributes": True}
-
-
-class ProfileDetailResponse(BaseModel):
-    """客户资料与最新研判结果的合并响应，供前端轮询异步任务状态。"""
-
-    source_id: int
-    source_type: str
-    file_url: Optional[str] = None
-    file_name: Optional[str] = None
-    parse_status: str
-    parse_error: Optional[str] = None
-    customer_name: Optional[str] = None
-    contact_info: Optional[str] = None
-    background_info: Optional[dict[str, Any]] = None
-    match_result: Optional[str] = None
-    matched_product: Optional[str] = None
-    match_score: Optional[float] = None
-    match_reason: Optional[str] = None
-    recommended_programs: Optional[Any] = None
-    source_create_time: datetime
-    profile_update_time: Optional[datetime] = None
-
-
-class AnalyzeRequest(BaseModel):
-    """手动触发研判时可选指定规则；不传时由 Service 按优先级选择启用规则。"""
-
-    rule_id: Optional[int] = Field(default=None, gt=0, description="指定的画像规则 ID")
 
 
 # ==================== 意向客户 ====================
@@ -238,12 +126,25 @@ class DailyReportCreate(BaseModel):
         examples=["draft"])
     raw_content: Optional[str] = Field(None, description="口述/输入原文",
                                        examples=["今天跟进了3个客户..."])
-    # raw_content: 员工原始口述，content: Dify/AI 结构化后的版本
-    content: str = Field(..., description="AI结构化后的文本")
+    # raw_content: 员工原始口述，content: LLM/AI 结构化后的版本
+    # 如果只传 raw_content，后端会自动调用 LLM 结构化填充 content
+    content: Optional[str] = Field(None, description="AI结构化后的文本（可由后端自动生成）")
     key_progress: Optional[List[str]] = Field(None, examples=[["签约1单", "新增2个意向"]])
     # key_progress 和 risks 是字符串数组，支持多条进展/风险
     risks: Optional[List[str]] = Field(None, examples=[["客户A可能流失"]])
     next_plan: Optional[str] = Field(None, examples=["明天跟进新客户"])
+
+
+class DictateReportRequest(BaseModel):
+    """口述日报请求：员工口述原文，由后端 AI 自动结构化后落库"""
+    employee_id: int = Field(..., examples=[2], description="员工ID")
+    report_date: date = Field(..., examples=["2025-03-20"], description="日报日期")
+    raw_content: str = Field(..., min_length=1, description="口述/输入原文")
+    status: Literal["draft", "submitted"] = Field(
+        "draft",
+        description="日报状态：draft(草稿)/submitted(已提交)",
+        examples=["draft"],
+    )
 
 
 class DailyReportResponse(BaseModel):
@@ -274,3 +175,162 @@ class DailyReportSummaryResponse(BaseModel):
     report_date: date
     total_submitted: int
     employees: List[EmployeeSummaryItem]
+
+
+class DailyReportManagementSummary(BaseModel):
+    """管理层日报汇总响应（智能报告模块，含 AI 自然语言总览）"""
+    report_date: date
+    total_submitted: int
+    employees: List[EmployeeSummaryItem]
+    ai_overview: str = Field(
+        "", description="AI 基于当日团队日报生成的整体工作总览文本（LLM 不可用时为空）"
+    )
+
+
+# ==================== 客户研判模块 ====================
+# 以下 Schema 供 services/profile_service.py 和 routers/profile.py 使用
+# 对应 models/crm.py 中的 ProfileRule / CustomerSource / CustomerProfile
+
+class CustomerSourceResponse(BaseModel):
+    """客户信息来源响应"""
+    id: int
+    source_type: str
+    raw_content: Optional[str] = None
+    file_url: Optional[str] = None
+    file_name: Optional[str] = None
+    parse_status: str
+    parse_result: Optional[dict] = None
+    parse_error: Optional[str] = None
+    operator_id: Optional[int] = None
+    create_time: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class CustomerProfileResponse(BaseModel):
+    """客户画像研判结果响应"""
+    id: int
+    customer_name: Optional[str] = None
+    contact_info: Optional[str] = None
+    source_id: Optional[int] = None
+    background_info: Optional[dict] = None
+    match_result: Optional[str] = None
+    matched_product: Optional[str] = None
+    match_score: Optional[float] = None
+    match_reason: Optional[str] = None
+    recommended_programs: Optional[dict] = None
+    evaluator_id: Optional[int] = None
+    create_time: Optional[datetime] = None
+    update_time: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class ProfileDetailResponse(BaseModel):
+    """客户研判完整详情（来源 + 画像联合查询）"""
+    # 来源信息
+    source_id: int
+    source_type: str
+    file_url: Optional[str] = None
+    file_name: Optional[str] = None
+    parse_status: str
+    parse_error: Optional[str] = None
+    # 画像信息（研判未完成时为 None）
+    customer_name: Optional[str] = None
+    contact_info: Optional[str] = None
+    background_info: Optional[dict] = None
+    match_result: Optional[str] = None
+    matched_product: Optional[str] = None
+    match_score: Optional[float] = None
+    match_reason: Optional[str] = None
+    recommended_programs: Optional[dict] = None
+    # 时间
+    source_create_time: Optional[datetime] = None
+    profile_update_time: Optional[datetime] = None
+
+
+class ProfileRuleCreate(BaseModel):
+    """创建画像研判规则"""
+    product_line: str = Field(..., max_length=64, examples=["留学申请"])
+    rule_name: str = Field(..., max_length=128, examples=["硕博连读-本科毕业生匹配规则"])
+    rule_content: dict = Field(..., description="研判规则配置（JSON）")
+    match_prompt: Optional[str] = Field(None, description="AI 研判系统提示词")
+    priority: int = Field(0, description="优先级（数值越大越优先）")
+
+
+class ProfileRuleUpdate(BaseModel):
+    """更新画像研判规则（部分更新）"""
+    product_line: Optional[str] = None
+    rule_name: Optional[str] = None
+    rule_content: Optional[dict] = None
+    match_prompt: Optional[str] = None
+    priority: Optional[int] = None
+    status: Optional[int] = Field(None, description="1=启用 0=禁用")
+
+
+class ProfileRuleResponse(BaseModel):
+    """画像研判规则响应"""
+    id: int
+    product_line: str
+    rule_name: str
+    rule_content: dict
+    match_prompt: Optional[str] = None
+    priority: int
+    status: int
+    create_time: Optional[datetime] = None
+    update_time: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class AnalyzeRequest(BaseModel):
+    """触发 AI 研判请求"""
+    rule_id: Optional[int] = Field(None, description="指定规则 ID（不填则自动按优先级匹配）")
+
+
+# ==================== 智能助手模块 ====================
+# 以下 Schema 供 services/assistant_service.py 和 routers/assistant.py 使用
+# 对应 models/crm.py 中的 AssistantSession / AssistantMessage
+
+class AssistantChatRequest(BaseModel):
+    """智能助手聊天请求"""
+    session_id: Optional[str] = Field(None, description="会话 ID（首次对话不传，后端自动生成）")
+    message: str = Field(..., min_length=1, max_length=2000, description="用户消息")
+
+
+class AssistantChatResponse(BaseModel):
+    """智能助手聊天回复"""
+    session_id: str
+    reply_text: str
+    action_type: Optional[str] = None  # text/sql/api
+    action_data: Optional[dict] = None  # SQL 查询结果或 API 返回数据
+    create_time: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AssistantSessionResponse(BaseModel):
+    """智能助手会话响应"""
+    id: int
+    session_id: str
+    employee_id: int
+    status: str
+    create_time: datetime
+    last_message_time: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class AssistantMessageResponse(BaseModel):
+    """智能助手消息响应"""
+    id: int
+    session_id: str
+    role: str
+    content: str
+    action_type: Optional[str] = None
+    action_detail: Optional[dict] = None
+    action_result: Optional[dict] = None
+    tokens_used: Optional[int] = None
+    create_time: datetime
+
+    model_config = {"from_attributes": True}

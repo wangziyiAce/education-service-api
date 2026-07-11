@@ -349,25 +349,6 @@ class SysUser(Base):
         comment="账号状态",
     )
 
-    # --- 登录失败计数（连续失败锁定）---
-    # 对应 API 文档 §4.2 规则4：连续 5 次失败锁定 30 分钟
-    # 登录成功后清零
-    failed_login_count: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=0,
-        comment="连续登录失败次数（成功后清零）",
-    )
-
-    # --- 锁定截止时间 ---
-    # NULL = 未锁定；非 NULL = 锁定到该时间点
-    # 登录时检查：如果 locked_until > now，拒绝登录
-    locked_until: Mapped[Optional[datetime]] = mapped_column(
-        DateTime,
-        default=None,
-        comment="账户锁定截止时间（超过后自动解锁）",
-    )
-
     # --- 创建时间 ---
     create_time: Mapped[datetime] = mapped_column(
         DateTime,

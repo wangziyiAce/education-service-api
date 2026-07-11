@@ -33,7 +33,7 @@ import os
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, Query, UploadFile
 from sqlalchemy.orm import Session
 
 # --- 公共基础 ---
@@ -42,9 +42,11 @@ from models.common import (
     ValidationError,
     get_current_user,
     success_response,
+    verify_dify_token,
 )
 
 # --- 数据模型 ---
+from models.crm import CustomerProfile, CustomerSource
 from models.user import SysUser
 
 # --- Schema ---
@@ -60,6 +62,7 @@ from schemas.crm import (
 # --- Service ---
 from services.profile_service import (
     _extract_file_content,
+    _llm_match_analysis,
     create_profile_rule,
     execute_analysis,
     get_profile_detail,
@@ -79,11 +82,10 @@ from utils.database import get_db
 # prefix="/api/v1/profile" 由 main.py 中 include_router 统一设置
 router = APIRouter(tags=["客户研判"])
 
-# 上传文件存储目录
-UPLOAD_DIR = "uploads/profiles"
+# 上传配置（从 .env 读取，无硬编码）
+from config import UPLOAD_DIR, MAX_UPLOAD_SIZE
 # 允许的文件类型
 ALLOWED_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".txt", ".docx"}
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 
 # ============================================================
@@ -139,8 +141,8 @@ async def api_upload_customer_source(
 
         # --- 文件大小校验 ---
         content = await file.read()
-        if len(content) > MAX_FILE_SIZE:
-            raise ValidationError(f"文件大小超过限制: {MAX_FILE_SIZE // 1024 // 1024}MB")
+        if len(content) > MAX_UPLOAD_SIZE:
+            raise ValidationError(f"文件大小超过限制: {MAX_UPLOAD_SIZE // 1024 // 1024}MB")
 
         # --- 存储文件 ---
         # 按年月分目录存储，防止单目录文件过多
@@ -189,6 +191,108 @@ async def api_upload_customer_source(
         },
         message="资料已上传",
     )
+
+
+# ============================================================
+# 一-B、客户资料上传（JSON 版本，供 Dify HTTP 节点调用）
+# ============================================================
+
+
+@router.post("/profile/upload-json", summary="上传客户资料(JSON)", dependencies=[Depends(verify_dify_token)])
+def api_upload_customer_source_json(
+    request: dict = Body(...),  # {"content_text":"...", "source_type":"text", "file_url":null, "file_name":null}
+    db: Session = Depends(get_db),
+):
+    """
+    纯 JSON 版本的上传接口，供 Dify Chatflow HTTP 节点调用。
+
+    Dify HTTP 节点只能发送 JSON 请求体，不能发 multipart/form-data。
+    文件内容由 Dify 文档提取器处理后，以文本形式传入 content_text 字段。
+
+    请求体:
+      {"content_text": "提取的文件文本内容", "source_type": "pdf_resume", "file_url": null, "file_name": "简历.pdf"}
+    """
+    source = upload_customer_source(
+        db=db,
+        source_type=request.get("source_type", "text"),
+        operator_id=None,  # Dify 调用时无用户上下文
+        content_text=request.get("content_text"),
+        file_url=request.get("file_url"),
+        file_name=request.get("file_name"),
+    )
+    return success_response(
+        data={
+            "source_id": source.id,
+            "source_type": source.source_type,
+            "file_name": source.file_name,
+            "file_url": source.file_url,
+            "parse_status": source.parse_status,
+            "create_time": source.create_time.isoformat(),
+        },
+        message="资料已上传",
+    )
+
+
+# ============================================================
+# 三-B、同步研判（供 Dify Chatflow HTTP 节点调用，直接返回结果）
+# ============================================================
+
+
+@router.post("/profile/analyze-direct", summary="同步研判(供Dify调用)", dependencies=[Depends(verify_dify_token)])
+def api_analyze_direct(
+    request: dict = Body(...),  # {"source_id": 1, "content_text": "客户文本", "rule_content": {...}}
+    db: Session = Depends(get_db),
+):
+    """
+    同步执行客户研判，直接返回 LLM 研判结果。供 Dify Chatflow HTTP 节点调用。
+
+    与 /profile/{source_id}/analyze 的区别：
+      - 那个是异步（BackgroundTasks + 轮询），给前端页面用
+      - 这个是同步（阻塞等待LLM结果），给 Dify Chatflow 用
+
+    请求体:
+      {"source_id": 1, "content_text": "..."}
+    """
+
+    source_id = request.get("source_id")
+    content_text = request.get("content_text", "")
+
+    # 校验来源记录存在
+    source = db.query(CustomerSource).filter_by(id=source_id).first()
+    if not source:
+        raise NotFoundError(f"客户来源记录不存在: id={source_id}")
+
+    # 准备客户数据 + 调用 LLM 进行语义研判（规则从 .md 文件动态加载）
+    customer_data = {
+        "name": content_text[:64] if content_text else None,
+        "raw_text": content_text,
+        "source_type": source.source_type,
+        "file_name": source.file_name,
+    }
+
+    ai_result = _llm_match_analysis(
+        customer_data=customer_data,
+        content_text=content_text or (source.raw_content or ""),
+    )
+
+    # 保存研判结果
+    profile = CustomerProfile(
+        customer_name=ai_result.get("customer_name"),
+        source_id=source_id,
+        background_info=ai_result.get("background_info"),
+        match_result=ai_result.get("match_result"),
+        matched_product=ai_result.get("matched_product"),
+        match_score=ai_result.get("match_score"),
+        match_reason=ai_result.get("match_reason"),
+        recommended_programs=ai_result.get("recommended_programs"),
+        evaluator_id=None,  # Dify 调用时无用户上下文
+    )
+    db.add(profile)
+    source.parse_status = "success"
+    source.parse_result = ai_result.get("background_info", {})
+    db.commit()
+
+    return success_response(data=ai_result, message="研判完成")
 
 
 # ============================================================
