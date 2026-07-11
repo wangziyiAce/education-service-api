@@ -192,3 +192,8 @@ LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
 # --- LLM 调用超时（秒）---
 # 意图识别和 SQL 生成通常 5-15 秒，给 60 秒余量
 LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "60"))
+
+# --- 通义千问 API Key（学生智能助手 student_chat 模块使用）---
+# 兼容阿里云 DashScope 的 Qwen 系列模型。
+# ⚠️ 不要提交到 Git！必须通过环境变量传入；留空时 Qwen 不可用（应用仍可正常启动）
+DASHSCOPE_API_KEY: str = os.getenv("DASHSCOPE_API_KEY", "")
