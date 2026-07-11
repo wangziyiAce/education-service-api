@@ -30,8 +30,9 @@ API 文档地址（启动后访问）:
 """
 
 # --- 加载 .env（必须在所有模块导入之前）---
+from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 # --- contextlib 标准库 ---
 # asynccontextmanager: 把异步生成器函数变成异步上下文管理器，

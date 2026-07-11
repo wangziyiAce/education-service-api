@@ -29,9 +29,13 @@
 import os  # 读取操作系统环境变量
 
 # --- 加载 .env 文件（必须先于所有 os.getenv() 调用）---
-from dotenv import load_dotenv
+import os as _os
+from pathlib import Path as _Path
+from dotenv import load_dotenv as _load_dotenv
 
-load_dotenv()
+# 从当前文件位置向上找项目根目录的 .env
+_env_path = _Path(__file__).resolve().parent / ".env"
+_load_dotenv(_env_path)
 
 
 # ============================================================
