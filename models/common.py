@@ -53,7 +53,8 @@ from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 # --- SQLAlchemy ---
-from sqlalchemy.orm import Session
+from sqlalchemy import BigInteger, Column, DateTime, func
+from sqlalchemy.orm import Session, declared_attr
 
 # --- 项目内部 ---
 from config import SECRET_KEY, BCRYPT_COST, ACCESS_TOKEN_EXPIRE_MINUTES
@@ -84,6 +85,34 @@ class UpdateMixin(TimestampMixin):
 
 # 日志实例
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# 第零部分：ORM 公共列定义 & Mixin
+# ============================================================
+# 供 models/chat.py 等使用旧式 Column() 风格的 Model 复用。
+# models/crm.py 使用新式 mapped_column()，不需要这两个定义。
+# ============================================================
+
+# BIGINT UNSIGNED AUTO_INCREMENT 主键的快捷定义
+# 用法: id = Column(BigIntPrimaryKey, primary_key=True, autoincrement=True)
+BigIntPrimaryKey = BigInteger().with_variant(
+    __import__("sqlalchemy.dialects.mysql", fromlist=["BIGINT"]).BIGINT(unsigned=True),
+    "mysql",
+)
+
+
+class TimestampMixin:
+    """create_time + update_time 通用 Mixin，供旧式 Column() Model 继承。"""
+
+    @declared_attr
+    def create_time(cls):
+        return Column(DateTime, nullable=False, server_default=func.now(), comment="创建时间")
+
+    @declared_attr
+    def update_time(cls):
+        return Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now(), comment="更新时间")
+
 
 # ============================================================
 # 第一部分：统一响应格式工具
@@ -692,3 +721,48 @@ def require_role(allowed_roles: List[str]) -> Callable:
         return current_user
 
     return role_checker
+
+
+# ============================================================
+# 第七部分：Dify 服务令牌鉴权
+# ============================================================
+# 对应 API 文档第 10 章 Dify 工具 API。
+#
+# Dify Chatflow / Workflow 中的 HTTP 节点调用 FastAPI 时，
+# 不使用用户 JWT（因为 Dify 没有登录用户），而是使用预设的服务令牌。
+#
+# 使用方式（在路由中）:
+#   @router.post("/profile/upload-json", dependencies=[Depends(verify_dify_token)])
+#
+# Dify 侧配置:
+#   HTTP 节点 → Authorization: Bearer {DIFY_SERVICE_TOKEN}
+#   Token 值从 .env 的 DIFY_SERVICE_TOKEN 中获取
+# ============================================================
+
+
+def verify_dify_token(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+):
+    """
+    校验 Dify 服务令牌。用于保护供 Dify 调用的接口。
+
+    与 get_current_user 的区别:
+      - get_current_user: 校验用户 JWT → 返回 SysUser 对象
+      - verify_dify_token: 校验固定令牌 → 不返回用户，仅验证身份
+
+    使用场景:
+      POST /api/v1/profile/upload-json   — Dify Chatflow 上传客户资料
+      POST /api/v1/profile/analyze-direct — Dify Chatflow 同步研判
+    """
+    from config import DIFY_SERVICE_TOKEN
+
+    if credentials is None:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": 40301, "message": "无效的服务令牌", "data": None},
+        )
+    if credentials.credentials != DIFY_SERVICE_TOKEN:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": 40301, "message": "服务令牌校验失败", "data": None},
+        )

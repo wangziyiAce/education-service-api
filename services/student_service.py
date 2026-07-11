@@ -731,21 +731,8 @@ def authenticate_user(db: Session, username: str, password: str) -> TokenRespons
     # 1. 查用户（只用 username 查，因为 uk_username 唯一索引）
     user = db.query(SysUser).filter_by(username=username).first()
 
-    # 2. 锁定检查（对应 API 文档 §4.2 规则4：连续 5 次失败锁定 30 分钟）
-    if user and user.locked_until:
-        now = datetime.now()
-        if user.locked_until > now:
-            remaining = int((user.locked_until - now).total_seconds() // 60) + 1
-            raise AuthError(f"账户已锁定，请 {remaining} 分钟后重试")
-
-    # 3. 用户名或密码错误 — 不告知具体是哪个错了（安全性：防撞库枚举）
+    # 2. 用户名或密码错误 — 不告知具体是哪个错了（安全性：防撞库枚举）
     if user is None or not verify_password(password, user.password_hash):
-        # 记录失败次数（用户存在时才记录）
-        if user is not None:
-            user.failed_login_count = (user.failed_login_count or 0) + 1
-            if user.failed_login_count >= 5:
-                user.locked_until = datetime.now() + timedelta(minutes=30)
-            db.commit()
         raise AuthError("用户名或密码错误")
 
     # 4. 账号状态检查
@@ -762,9 +749,7 @@ def authenticate_user(db: Session, username: str, password: str) -> TokenRespons
         role_id=user.role_id,
     )
 
-    # 6. 登录成功后：重置登录失败计数 + 清除锁定 + 更新最后登录时间
-    user.failed_login_count = 0
-    user.locked_until = None
+    # 6. 登录成功后：更新最后登录时间
     db.commit()
 
     # 7. 返回 Token + 用户信息

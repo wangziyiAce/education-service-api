@@ -36,12 +36,13 @@ API 认证:
   《教育服务系统_Dify工作流设计规范文档_V1.1》
 """
 
+import json
 import logging
 from typing import Any, Dict, Optional
 
 import httpx
 
-from config import DIFY_API_KEY, DIFY_API_URL
+from config import DIFY_API_KEY, DIFY_API_URL, LLM_API_URL, LLM_API_KEY, LLM_MODEL, LLM_TIMEOUT
 from models.common import BusinessError
 
 logger = logging.getLogger(__name__)
@@ -181,7 +182,31 @@ def call_dify_workflow(
 
     outputs = data.get("outputs", {})
     logger.info(f"Dify 调用成功: workflow={workflow_name}")
-    return outputs
+
+    # Dify Workflow 的 Answer 节点输出的是 JSON 字符串
+    # 结构: outputs.answer_json = '{"success":true,"result":{...}}'
+    # 解析并返回 result 部分，调用方直接使用 match_result/match_score 等字段
+    answer_json = outputs.get("answer_json", "{}")
+    if isinstance(answer_json, str):
+        try:
+            answer = json.loads(answer_json)
+        except json.JSONDecodeError:
+            raise BusinessError(
+                code=50202,
+                message="Dify 返回的 answer_json 无法解析",
+                status_code=502,
+            )
+    else:
+        answer = answer_json
+
+    if not answer.get("success"):
+        raise BusinessError(
+            code=50202,
+            message="AI 研判失败",
+            status_code=502,
+        )
+
+    return answer.get("result", {})
 
 
 def is_dify_available() -> bool:
@@ -204,3 +229,120 @@ def is_dify_available() -> bool:
             return response.status_code < 500
     except Exception:
         return False
+
+
+# ============================================================
+# LLM 直调函数（绕过 Dify，直接调用模型 API）
+# ============================================================
+# 使用 OpenAI 兼容的 /v1/chat/completions 格式。
+# DeepSeek、通义千问、GLM 等国产模型均兼容。
+#
+# 为什么绕过 Dify？
+#   - 客户研判需要灵活构造 prompt（动态加载 .md 规则文件全文）
+#   - Dify Workflow 的 Start 节点变量类型有限，不适合传大段规则文本
+#   - 直调 LLM 更简单，减少中间依赖
+
+
+def call_llm_direct(
+    system_prompt: str,
+    user_message: str,
+    model: Optional[str] = None,
+    temperature: float = 0.2,
+    response_format: str = "json_object",
+    max_tokens: int = 4096,
+) -> Dict[str, Any]:
+    """
+    直接调用 LLM API（OpenAI 兼容格式 /v1/chat/completions）。
+
+    参数:
+        system_prompt:   系统提示词（含产品线规则全文 + 输出格式约束）
+        user_message:    用户消息（客户资料原文 + 结构化画像）
+        model:           模型名，默认 config.LLM_MODEL
+        temperature:     0.2（研判需严谨推理，低随机性）
+        response_format: "json_object" 确保 LLM 返回合法 JSON
+        max_tokens:      最大输出 4096
+
+    返回:
+        LLM 返回的 JSON dict
+
+    异常:
+        BusinessError(50201): API 调用失败（超时/401/429等）
+        BusinessError(50202): 返回 JSON 解析失败
+    """
+    if not LLM_API_KEY:
+        raise BusinessError(code=50201, message="LLM_API_KEY 未配置，请在 .env 中设置", status_code=502)
+    if not LLM_API_URL:
+        raise BusinessError(code=50201, message="LLM_API_URL 未配置，请在 .env 中设置", status_code=502)
+
+    resolved_model = model or LLM_MODEL
+    url = f"{LLM_API_URL.rstrip('/')}/chat/completions"
+
+    payload: Dict[str, Any] = {
+        "model": resolved_model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if response_format:
+        payload["response_format"] = {"type": response_format}
+
+    logger.info(f"LLM直调: model={resolved_model}, prompt_len={len(system_prompt)}")
+
+    try:
+        with httpx.Client(timeout=LLM_TIMEOUT) as client:
+            response = client.post(
+                url,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {LLM_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+            )
+    except httpx.TimeoutException:
+        raise BusinessError(code=50201, message=f"LLM调用超时（{LLM_TIMEOUT}秒）", status_code=502)
+    except httpx.ConnectError:
+        raise BusinessError(code=50201, message=f"LLM服务不可达: {LLM_API_URL}", status_code=502)
+
+    if response.status_code != 200:
+        err = response.text[:300]
+        logger.error(f"LLM返回错误: HTTP{response.status_code} {err}")
+        if response.status_code == 401:
+            raise BusinessError(code=50201, message="LLM API Key无效", status_code=502)
+        if response.status_code == 429:
+            raise BusinessError(code=50201, message="LLM调用频率超限", status_code=502)
+        raise BusinessError(code=50201, message=f"LLM返回错误 HTTP{response.status_code}", status_code=502)
+
+    try:
+        result = response.json()
+    except Exception:
+        raise BusinessError(code=50202, message="LLM返回非JSON", status_code=502)
+
+    choices = result.get("choices", [])
+    if not choices:
+        raise BusinessError(code=50202, message="LLM返回空结果", status_code=502)
+
+    content = choices[0].get("message", {}).get("content", "")
+    if not content:
+        raise BusinessError(code=50202, message="LLM返回内容为空", status_code=502)
+
+    # 去掉可能的 ```json ... ``` 包裹
+    content = content.strip()
+    if content.startswith("```"):
+        lines = content.split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        content = "\n".join(lines).strip()
+
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError as e:
+        logger.error(f"LLM返回JSON解析失败: {str(e)} content={content[:300]}")
+        raise BusinessError(code=50202, message=f"LLM返回JSON解析失败: {str(e)}", status_code=502)
+
+    logger.info(f"LLM直调成功: model={resolved_model}")
+    return data
