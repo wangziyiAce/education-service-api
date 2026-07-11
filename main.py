@@ -29,6 +29,10 @@ API 文档地址（启动后访问）:
   《教育服务系统_总体架构设计文档_定稿版V1.2》第 7 章 — 后端代码架构
 """
 
+# --- 加载 .env（必须在所有模块导入之前）---
+from dotenv import load_dotenv
+load_dotenv()
+
 # --- contextlib 标准库 ---
 # asynccontextmanager: 把异步生成器函数变成异步上下文管理器，
 # 用于 FastAPI 的 lifespan（应用生命周期）管理
@@ -136,33 +140,16 @@ def health_check():
 
 
 # ============================================================
-# 四、路由注册（后续按模块逐步启用）
+# 四、路由注册
 # ============================================================
-# 每个 routers/ 下的模块定义了一个 APIRouter 实例（router），
-# 在这里通过 app.include_router() 注册到应用上。
-#
-# 模块分工:
-#   routers/user.py    → 用户登录、注册、个人信息管理
-#   routers/crm.py     → 客户线索、跟进记录
-#   routers/chat.py    → 客服对话
-#   routers/profile.py → 客户画像研判
-#   routers/student.py → 学生请假、投诉、心理预警
-#   routers/report.py  → 报告生成与查询
-#   routers/tools.py   → 工具类接口（文件上传、数据导出等）
-#
-# 当前这些路由模块尚未实现，等对应的 services 和 schemas 开发完成后，
-# 取消下面的注释即可启用。
+# 所有业务模块的路由统一通过 routers/__init__.py 的 register_routers() 注册。
+# 当前已注册: 基础设施（auth） + 客户研判（profile）
+# 后续模块在 routers/__init__.py 中取消注释即可启用。
 # ============================================================
 
-# --- 路由注册（取消注释即可启用对应的功能模块）---
-# from routers import chat, crm, profile, report, student, tools
-#
-# app.include_router(chat.router,    prefix="/api/v1/chat",    tags=["客服Agent"])
-# app.include_router(crm.router,     prefix="/api/v1/crm",     tags=["企业助手"])
-# app.include_router(profile.router, prefix="/api/v1/profile", tags=["客户研判"])
-# app.include_router(report.router,  prefix="/api/v1/report",  tags=["智能报告"])
-# app.include_router(student.router, prefix="/api/v1/student", tags=["学生助手"])
-# app.include_router(tools.router,   prefix="/api/v1/tools",   tags=["系统工具"])
+from routers import register_routers
+
+register_routers(app)
 
 
 # ============================================================

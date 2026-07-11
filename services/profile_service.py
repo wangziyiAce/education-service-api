@@ -38,12 +38,16 @@
   - 第 4.1 节 客户研判模块
 """
 
+import json
 import logging
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
+
+# --- 规则文件路径 ---
+from config import PRODUCT_RULES_PATH, PRODUCT_CATALOG_PATH
 
 # --- 公共基础 ---
 from models.common import (
@@ -327,22 +331,18 @@ def execute_analysis(
     执行 AI 研判（由后台异步任务调用，使用独立 Session）。
 
     ⚠️ 此函数在 BackgroundTasks 中执行，不在请求事务中。
-    拥有独立的数据库会话和事务边界。
 
     流程:
       1. 独立 Session 查询来源记录
-      2. 匹配画像规则（按 product_line + priority 排序）
-      3. 调用 Dify AI（事务外）
+      2. 提取客户数据（从 parse_result 或 raw_content）
+      3. 从 .md 文件加载规则 → 调用 LLM 语义研判（事务外）
       4. 写入 customer_profile（独立事务）
       5. 更新 customer_source.parse_status
 
     参数:
         source_id:    来源记录 ID
         evaluator_id: 研判人 ID
-        rule_id:      指定规则 ID
-
-    返回:
-        CustomerProfile ORM 对象
+        rule_id:      指定规则 ID（保留兼容，当前不使用 DB 规则）
     """
     db = SessionLocal()  # ← 独立 Session
     try:
@@ -355,65 +355,22 @@ def execute_analysis(
         # 2. 准备客户数据（从 parse_result 或 raw_content 提取）
         customer_data = _extract_customer_data(source)
 
-        # 3. 获取画像规则
-        if rule_id:
-            rules = [db.query(ProfileRule).filter_by(id=rule_id, status=1).first()]
-            rules = [r for r in rules if r is not None]
-        else:
-            # 自动匹配：按 product_line + priority 降序排列
-            rules = (
-                db.query(ProfileRule)
-                .filter_by(status=1)
-                .order_by(ProfileRule.priority.desc())
-                .all()
+        # 3. 调用 LLM 进行语义研判（事务外调用外部 API）
+        # ============================================
+        # 规则从 .md 文件动态加载，LLM 根据规则全文做语义匹配。
+        # 规则不在代码中——修改 .md 文件即可调整规则。
+        # ============================================
+        try:
+            ai_result = _llm_match_analysis(
+                customer_data=customer_data,
+                content_text=source.raw_content or "",
             )
-
-        if not rules:
-            # 没有启用的规则 → 标记失败
+        except Exception as e:
+            logger.exception(f"LLM研判异常 source_id={source_id}")
             source.parse_status = "failed"
-            source.parse_error = "没有启用的画像研判规则"
+            source.parse_error = str(e)[:500]
             db.commit()
             return None
-
-        # 4. 调用 Dify AI 进行研判（事务外调用外部 API）
-        # ============================================
-        # 先尝试真实 Dify 调用，失败则 fallback 到 mock（MVP 阶段）
-        # ⚠️ Dify Start 节点字段: raw_data(Object), rules(Text=JSON字符串), query(Text), task_type(Text)
-        # ============================================
-        from utils.dify_client import call_dify_workflow, is_dify_available
-        import json
-
-        ai_result = None
-        if is_dify_available():
-            try:
-                # raw_data: 客户结构化数据（Object）
-                raw_data = {
-                    "source_type": source.source_type,
-                    "content": source.raw_content or "",
-                    "file_url": source.file_url,
-                }
-                # rules: 画像规则列表序列化为 JSON 字符串（Dify Start 没有 Array 类型）
-                rules_json = json.dumps(
-                    [{"product_line": r.product_line, "rule_content": r.rule_content} for r in rules],
-                    ensure_ascii=False,
-                )
-                ai_result = call_dify_workflow(
-                    "customer_profiling",
-                    {
-                        "raw_data": raw_data,
-                        "rules": rules_json,
-                        "query": f"请对以下客户资料进行画像研判：{source.raw_content or ''}",
-                        "task_type": "customer_profiling",
-                    },
-                )
-                logger.info(f"Dify 研判成功 source_id={source_id}: {ai_result.get('match_result')}")
-            except Exception as e:
-                logger.warning(f"Dify 调用失败，降级到 mock: {str(e)}")
-
-        # MVP 降级：Dify 不可用或调用失败时使用 mock 结果
-        if ai_result is None:
-            logger.info(f"使用 mock 研判结果 source_id={source_id}")
-            ai_result = _mock_analysis_result(customer_data, rules[0] if rules else None)
         # ============================================
 
         # 5. 保存研判结果（独立事务）
@@ -532,36 +489,140 @@ def _extract_customer_data(source: CustomerSource) -> Dict[str, Any]:
     }
 
 
-def _mock_analysis_result(
+def _load_rules_context() -> str:
+    """
+    从 .md 文件加载产品线规则 + 全产品目录，拼接为 LLM 上下文。
+
+    规则不在代码中——修改 .md 文件即可更新规则，无需改代码。
+    """
+    parts = []
+    for label, path in [
+        ("产品线匹配规则", PRODUCT_RULES_PATH),
+        ("全产品线目录", PRODUCT_CATALOG_PATH),
+    ]:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            parts.append(text)
+            logger.info(f"已加载{label}: {path} ({len(text)}字符)")
+        else:
+            logger.warning(f"{label}文件不存在: {path}")
+    return "\n\n".join(parts)
+
+
+def _llm_match_analysis(
     customer_data: Dict[str, Any],
-    rule: Optional[ProfileRule] = None,
+    content_text: str = "",
 ) -> Dict[str, Any]:
     """
-    MVP 阶段的模拟研判结果。
+    调用 LLM 进行客户-产品线智能语义匹配。
 
-    实际项目中替换为 Dify AI 调用。
-    这里返回一个示例结构，方便前端开发和接口联调。
+    规则从 .md 文件动态加载，作为 System Prompt 上下文传入 LLM。
+    LLM 负责理解规则 → 对客户画像做语义匹配 → 推荐产品线。
+
+    返回字段对齐 customer_profile 表:
+      match_result: matched | partial | not_matched
+      match_score:  DECIMAL(5,2)
+      matched_product / match_reason / recommended_programs(JSON)
     """
-    product_line = rule.product_line if rule else "留学申请"
+    rules_context = _load_rules_context()
 
-    return {
-        "match_result": "matched",
-        "matched_product": product_line,
-        "match_score": 85.50,
-        "match_reason": f"客户背景符合{product_line}产品线要求（MVP 模拟结果）",
-        "recommended_programs": [
-            {
-                "program_name": f"{product_line} - 推荐项目 A",
-                "score": 90,
-                "reason": "专业方向高度匹配",
-            },
-            {
-                "program_name": f"{product_line} - 推荐项目 B",
-                "score": 80,
-                "reason": "语言成绩达标",
-            },
-        ],
+    system_prompt = f"""你是一个教育服务机构的资深客户研判专家，精通两大产品线：
+- 新加坡国际本硕升学计划（8个项目：2+2定向培养本科班、2+2+1本硕连读、0.5+2国际本科班、0.5+2+1本硕连读、6+6酒店运营大专就业班、9+6航空运营大专就业班、一年制专升本、一年制本升硕）
+- 中德精英人才共建计划（16个专业方向：机电一体化技术、工业机械师、精密加工与数控技术、自动化技术、汽车机电一体化、电动汽车与高压系统、车身与车辆制造技术、建筑工程与项目管理、建筑设备与能源技术、金属构造与焊接技术、应用软件开发、IT系统集成与网络安全、综合护理与健康管理、老年康养与康复治疗、酒店与餐饮管理、航空地勤与物流管理）
+
+你的任务是根据客户画像，严格依据以下规则进行语义匹配，推荐最合适的产品线。
+
+---
+
+【产品线匹配规则与全产品目录】
+
+{rules_context}
+
+---
+
+【研判原则（按优先级）】
+1. 学历+年龄硬门槛——不满足则不推荐
+2. 核心需求对齐——升学/就业/学历提升/移民与产品线定位一致
+3. 语言能力评估——英语/德语水平决定是否需要语言培训
+4. 专业背景加分——客户专业/工作背景相关时加分
+5. 经济能力考量——年收入决定推荐新加坡(自费)还是德国(免学费+补贴)
+6. 诚实标注差距——不满足条件在gaps中明确指出
+
+【输出格式】必须只返回合法JSON，首字符为{{，不含markdown标记：
+
+{{
+  "customer_name": "姓名或null",
+  "background_info": {{"education":"学历","age":年龄或null,"intended_countries":["国家"],"language_scores":{{}},"work_experience":"描述或null","other_info":"其他或null"}},
+  "match_result": "matched",
+  "matched_product": "最优产品线完整名称(必须与产品目录一字不差)",
+  "match_score": 88.5,
+  "match_reason": "综合研判理由",
+  "candidates": [
+    {{
+      "name": "产品线完整名称",
+      "category": "新加坡/中德",
+      "match_level": "★★★",
+      "reasons": ["理由1","理由2"],
+      "gaps": ["差距1"],
+      "cost_note": "费用参考",
+      "next_step": "下一步建议"
+    }}
+  ],
+  "match_summary": "一句话概括",
+  "customer_snapshot": "学历=X 年龄=Y 核心需求=Z",
+  "recommended_programs": [{{"program_name":"项目名","score":90,"reason":"推荐理由"}}]
+}}
+
+【约束】
+1. product_name必须与产品目录完全一致，不得编造
+2. 最多5个candidates，质量优先
+3. 条件冲突(如年龄超限)绝不推荐
+4. ★★★=学历年龄完全符合+需求对齐+语言达标
+5. ★★=学历年龄符合+需求基本对齐 有1-2项差距
+6. ★=学历年龄符合但需求不完全对齐 或多项差距
+7. match_result: matched=有★★★候选, partial=仅有★★或★, not_matched=无候选
+8. match_score: matched≥80, partial=50-79, not_matched<50"""
+
+    customer_json = json.dumps(customer_data, ensure_ascii=False, indent=2)
+    user_message = f"""请对以下客户进行产品线精准匹配：
+
+## 客户原始资料
+{content_text[:2000] if content_text else "（未提供）"}
+
+## 客户结构化画像
+{customer_json}
+
+请按JSON格式输出匹配结果。"""
+
+    from utils.dify_client import call_llm_direct
+
+    logger.info(f"LLM研判开始: customer={customer_data.get('name','unknown')}")
+    llm_result = call_llm_direct(
+        system_prompt=system_prompt,
+        user_message=user_message,
+        temperature=0.2,
+        response_format="json_object",
+    )
+
+    standardized = {
+        "customer_name": llm_result.get("customer_name") or customer_data.get("name"),
+        "background_info": llm_result.get("background_info") or customer_data,
+        "match_result": llm_result.get("match_result", "not_matched"),
+        "matched_product": llm_result.get("matched_product"),
+        "match_score": llm_result.get("match_score"),
+        "match_reason": llm_result.get("match_reason"),
+        "candidates": llm_result.get("candidates", []),
+        "match_summary": llm_result.get("match_summary"),
+        "customer_snapshot": llm_result.get("customer_snapshot"),
+        "recommended_programs": llm_result.get("recommended_programs", []),
     }
+
+    logger.info(
+        f"LLM研判完成: match_result={standardized['match_result']}, "
+        f"score={standardized['match_score']}, candidates={len(standardized['candidates'])}"
+    )
+    return standardized
 
 
 # ============================================================

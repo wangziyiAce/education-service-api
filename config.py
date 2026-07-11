@@ -28,6 +28,11 @@
 
 import os  # 读取操作系统环境变量
 
+# --- 加载 .env 文件（必须先于所有 os.getenv() 调用）---
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 # ============================================================
 # 一、数据库连接配置
@@ -145,7 +150,47 @@ DIFY_API_KEY: str = os.getenv("DIFY_API_KEY", "")
 
 
 # ============================================================
-# 六、安全配置
+# 六、LLM 直调配置（绕过 Dify，直接调用模型 API）
+# ============================================================
+# 使用 OpenAI 兼容的 /v1/chat/completions 格式。
+# DeepSeek、通义千问、GLM 等国产模型均兼容此格式。
+#
+# ⚠️ API Key 通过 .env 文件或环境变量传入，不硬编码！
+# .env 已在 .gitignore 中排除，提交 GitHub 不会泄露。
+
+# --- LLM API 地址 ---
+# DeepSeek:  https://api.deepseek.com/v1
+# 通义千问:  https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_API_URL: str = os.getenv("LLM_API_URL", "")
+
+# --- LLM API Key ---
+LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
+
+# --- LLM 模型名称 ---
+LLM_MODEL: str = os.getenv("LLM_MODEL", "deepseek-chat")
+
+# --- LLM 请求超时（秒）---
+LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "120"))
+
+
+# ============================================================
+# 七、产品线规则文件路径
+# ============================================================
+# 客户研判模块从 .md 文件读取产品线匹配规则和产品目录。
+# 修改 .md 文件即可更新规则，无需改代码。
+
+PRODUCT_RULES_PATH: str = os.getenv(
+    "PRODUCT_RULES_PATH",
+    r"C:\Users\Windows\Desktop\产品线匹配规则.md",
+)
+PRODUCT_CATALOG_PATH: str = os.getenv(
+    "PRODUCT_CATALOG_PATH",
+    r"C:\Users\Windows\Desktop\全产品线目录.md",
+)
+
+
+# ============================================================
+# 八、安全配置
 # ============================================================
 # --- JWT 签名密钥 ---
 SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-in-production")

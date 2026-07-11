@@ -53,7 +53,7 @@ from schemas.crm import (
 # --- Service ---
 from services.profile_service import (
     _extract_file_content,
-    _mock_analysis_result,
+    _llm_match_analysis,
     create_profile_rule,
     execute_analysis,
     get_profile_detail,
@@ -236,56 +236,36 @@ def api_analyze_direct(
     db: Session = Depends(get_db),
 ):
     """
-    同步执行客户研判，直接返回 AI 结果。供 Dify Chatflow HTTP 节点调用。
+    同步执行客户研判，直接返回 LLM 研判结果。供 Dify Chatflow HTTP 节点调用。
 
     与 /profile/{source_id}/analyze 的区别：
       - 那个是异步（BackgroundTasks + 轮询），给前端页面用
-      - 这个是同步（阻塞等待结果），给 Dify Chatflow 用（有 60s 超时）
+      - 这个是同步（阻塞等待LLM结果），给 Dify Chatflow 用
 
     请求体:
-      {"source_id": 1, "content_text": "...", "rule_content": {...}}
+      {"source_id": 1, "content_text": "..."}
     """
-    import json
-    from utils.dify_client import call_dify_workflow, is_dify_available
 
     source_id = request.get("source_id")
     content_text = request.get("content_text", "")
-    rule_content = request.get("rule_content")  # 可选，Chatflow 传入已匹配的规则
 
     # 校验来源记录存在
     source = db.query(CustomerSource).filter_by(id=source_id).first()
     if not source:
         raise NotFoundError(f"客户来源记录不存在: id={source_id}")
 
-    # 准备研判输入
-    raw_data = {
+    # 准备客户数据 + 调用 LLM 进行语义研判（规则从 .md 文件动态加载）
+    customer_data = {
+        "name": content_text[:64] if content_text else None,
+        "raw_text": content_text,
         "source_type": source.source_type,
-        "content": content_text or (source.raw_content or ""),
-        "file_url": source.file_url,
+        "file_name": source.file_name,
     }
-    rules = [{"product_line": "custom", "rule_content": rule_content}] if rule_content else []
 
-    # 调用 Dify Workflow 或降级 mock
-    ai_result = None
-    if is_dify_available():
-        try:
-            ai_result = call_dify_workflow(
-                "customer_profiling",
-                {
-                    "raw_data": raw_data,
-                    "rules": json.dumps(rules, ensure_ascii=False) if rules else "[]",
-                    "query": f"请对以下客户资料进行画像研判：{content_text}",
-                    "task_type": "customer_profiling",
-                },
-            )
-        except Exception:
-            pass
-
-    if ai_result is None:
-        ai_result = _mock_analysis_result(
-            {"name": content_text[:64] if content_text else None, "raw_text": content_text},
-            None,
-        )
+    ai_result = _llm_match_analysis(
+        customer_data=customer_data,
+        content_text=content_text or (source.raw_content or ""),
+    )
 
     # 保存研判结果
     profile = CustomerProfile(
