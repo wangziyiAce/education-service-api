@@ -42,6 +42,7 @@ def register_routers(app: FastAPI) -> None:
     from routers.profile import router as profile_router
     from routers.report import router as report_router
     from routers.report_action import router as report_action_router
+    from routers.report_assistant import router as report_assistant_router
     from routers.report_data import router as report_data_router
     from routers.report_schedule import router as report_schedule_router
     from routers.student import router as student_router
@@ -57,6 +58,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(client_router)
     app.include_router(profile_router, prefix="/api/v1", tags=["客户研判"])
     app.include_router(report_router, prefix="/api/v1/reports", tags=["智能报告"])
+    app.include_router(report_assistant_router, prefix="/api/v1/reports/assistant", tags=["智能报告助手"])
     app.include_router(report_schedule_router, prefix="/api/v1/report-schedules", tags=["报告计划"])
     app.include_router(report_action_router, prefix="/api/v1/report-actions", tags=["报告行动"])
     app.include_router(report_data_router, prefix="/api/v1/report-data", tags=["报告数据"])

@@ -72,6 +72,7 @@ export const apiOperations: ApiOperation[] = [
   operation({ operationId: 'report-action-proxy-detail', group: 'reports', label: '报告行动详情（兼容接口）', method: 'GET', path: '/report-actions/{action_id}', description: '读取已有报告行动，便于兼容已合并的行动接口。' }),
   operation({ operationId: 'report-action-proxy-update', group: 'reports', label: '更新报告行动（兼容接口）', method: 'PATCH', path: '/report-actions/{action_id}', description: '更新已有报告行动，便于兼容已合并的行动接口。', defaultBody: {}, requiresConfirmation: true }),
   operation({ operationId: 'report-types', group: 'reports', label: '报告类型', method: 'GET', path: '/reports/types', description: '读取报告类型。' }),
+  operation({ operationId: 'report-assistant-message', group: 'reports', label: '智能报告助手', method: 'POST', path: '/reports/assistant/messages', description: '通过纯 Python 报告助手识别意图并创建或查询报告；不使用客服 Agent 的 Dify 工作流。', defaultBody: { message: '', conversation_context: {} }, requiresConfirmation: true }),
   operation({ operationId: 'report-generate', group: 'reports', label: '生成报告', method: 'POST', path: '/reports/generate', description: '提交异步报告。', defaultBody: { report_type: '' }, requiresConfirmation: true }),
   operation({ operationId: 'report-list', group: 'reports', label: '报告列表', method: 'GET', path: '/reports', description: '查询报告。' }),
   operation({ operationId: 'report-detail', group: 'reports', label: '报告详情', method: 'GET', path: '/reports/{report_id}', description: '读取报告详情。' }),

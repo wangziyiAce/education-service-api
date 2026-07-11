@@ -59,6 +59,12 @@ if (!authStore.includes('normalizeRoleCode')) throw new Error('auth store must n
 
 const sidebar = await readFile(new URL('src/components/layout/Sidebar.tsx', root), 'utf8')
 if (!sidebar.includes("to: '/admin/api-diagnostics'")) throw new Error('API diagnostics must be admin-only navigation')
+for (const marker of ['focus-visible:ring-2', 'overscroll-contain', 'safe-area-inset']) {
+  if (!sidebar.includes(marker)) throw new Error(`missing accessible drawer behavior: ${marker}`)
+}
+
+const appShell = await readFile(new URL('src/components/layout/AppShell.tsx', root), 'utf8')
+if (!appShell.includes('关闭导航遮罩')) throw new Error('drawer backdrop needs a distinct accessible name')
 
 const studentPortal = await readFile(new URL('src/pages/StudentJourneyPage.tsx', root), 'utf8')
 for (const marker of ['真实数据边界', '接口未开放', 'min-w-0']) {
@@ -66,8 +72,19 @@ for (const marker of ['真实数据边界', '接口未开放', 'min-w-0']) {
 }
 
 const customerService = await readFile(new URL('src/pages/CustomerServicePage.tsx', root), 'utf8')
-for (const marker of ['aria-busy', '暂无匹配课程', '暂无近期活动', 'sm:flex-row']) {
+for (const marker of ['aria-busy', '暂无匹配课程', '暂无近期活动', 'sm:flex-row', 'Intl.DateTimeFormat', 'break-words']) {
   if (!customerService.includes(marker)) throw new Error(`missing customer service responsive state: ${marker}`)
 }
+
+const adminUsersApi = await readFile(new URL('src/api/admin-users.ts', root), 'utf8')
+for (const marker of ['getOrganizations', "'/auth/organizations'"]) {
+  if (!adminUsersApi.includes(marker)) throw new Error(`missing organization API integration: ${marker}`)
+}
+
+const userManagement = await readFile(new URL('src/pages/admin/UserManagementPage.tsx', root), 'utf8')
+for (const marker of ['getOrganizations', "['admin', 'organizations']", '选择现有组织']) {
+  if (!userManagement.includes(marker)) throw new Error(`missing organization selector behavior: ${marker}`)
+}
+if (!userManagement.includes('scope="col"')) throw new Error('user table headers need column scope')
 
 console.log('editorial portal structure verified')
