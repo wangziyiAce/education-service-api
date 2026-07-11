@@ -1,22 +1,49 @@
+/** 客服中心：真实会话档案与课程/活动资料库，所有请求只经过 client 安全代理。 */
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BookOpen, CalendarDays, Send } from 'lucide-react'
-import { cancelEvent, createSession, getCourses, getEvents, getMessages, registerEvent, sendMessage } from '@/api/customer-service'
-import PageHeader from '@/components/shared/PageHeader'
-import LoadingState from '@/components/shared/LoadingState'
-import ErrorState from '@/components/shared/ErrorState'
-import EmptyState from '@/components/shared/EmptyState'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { BookOpen, CalendarDays, MessageSquareText, Send } from 'lucide-react'
+import { toast } from 'sonner'
+import { cancelEvent, createChatMessage, createChatSession, getChatMessages, getCourses, getEvents, registerEvent } from '@/api/customer-service'
+import { ArchiveCard } from '@/components/editorial/ArchiveCard'
+import { EditorialPageHeader } from '@/components/editorial/EditorialPageHeader'
+import { StatusStamp } from '@/components/editorial/StatusStamp'
+import { WriteConfirmDialog } from '@/components/api/WriteConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import EmptyState from '@/components/shared/EmptyState'
+import ErrorState from '@/components/shared/ErrorState'
+import LoadingState from '@/components/shared/LoadingState'
 
 export default function CustomerServicePage() {
-  const qc = useQueryClient(); const [sessionId, setSessionId] = useState(''); const [content, setContent] = useState('')
-  const session = useMutation({ mutationFn: createSession, onSuccess: (x) => setSessionId(x.session_id) })
-  useEffect(() => { if (!sessionId && !session.isPending && !session.isError) session.mutate() }, [sessionId]) // eslint-disable-line react-hooks/exhaustive-deps
-  const messages = useQuery({ queryKey: ['chat', sessionId], queryFn: () => getMessages(sessionId), enabled: !!sessionId })
-  const courses = useQuery({ queryKey: ['courses'], queryFn: getCourses }); const events = useQuery({ queryKey: ['events'], queryFn: getEvents })
-  const send = useMutation({ mutationFn: () => sendMessage(sessionId, content.trim()), onSuccess: async () => { setContent(''); await qc.invalidateQueries({ queryKey: ['chat', sessionId] }) } })
-  const event = useMutation({ mutationFn: ({ id, cancel }: { id: number; cancel: boolean }) => cancel ? cancelEvent(id) : registerEvent(id), onSuccess: async () => qc.invalidateQueries({ queryKey: ['events'] }) })
-  return <div><PageHeader title="客服咨询" description="查看课程与活动，并保存当前账号自己的咨询会话。" /><div className="grid gap-6 xl:grid-cols-[1.3fr_.7fr]"><Card><CardHeader><CardTitle>咨询会话</CardTitle></CardHeader><CardContent><div className="min-h-80 space-y-3">{session.isPending && <LoadingState text="正在建立会话…" />}{session.isError && <ErrorState onRetry={() => session.mutate()} />}{messages.data?.items.length === 0 && <EmptyState title="开始咨询" description="输入问题后，消息会保存到你的个人会话。" />}{messages.data?.items.map((m) => <div key={m.id} className={`max-w-[85%] rounded-lg p-3 text-sm ${m.role === 'user' ? 'ml-auto bg-primary text-primary-foreground' : 'bg-muted'}`}>{m.content}</div>)}</div><form className="mt-4 flex gap-2" onSubmit={(e) => { e.preventDefault(); if (content.trim()) send.mutate() }}><label className="sr-only" htmlFor="chat-message">咨询内容</label><Input id="chat-message" value={content} onChange={(e) => setContent(e.target.value)} placeholder="输入咨询内容…" /><Button type="submit" disabled={!sessionId || !content.trim() || send.isPending} aria-label="发送消息"><Send /></Button></form></CardContent></Card><div className="space-y-6"><Card><CardHeader><CardTitle className="flex gap-2"><BookOpen />课程</CardTitle></CardHeader><CardContent>{courses.isLoading && <LoadingState />}{courses.isError && <ErrorState onRetry={() => courses.refetch()} />}{courses.data?.items.map((x) => <article key={x.id} className="border-b py-3"><p className="font-medium">{x.project_name}</p><p className="text-xs text-muted-foreground">{x.description || x.category || '暂无简介'}</p></article>)}</CardContent></Card><Card><CardHeader><CardTitle className="flex gap-2"><CalendarDays />近期活动</CardTitle></CardHeader><CardContent>{events.data?.items.map((x) => <article key={x.id} className="border-b py-3"><p className="font-medium">{x.event_name}</p><p className="text-xs text-muted-foreground">{new Date(x.start_time).toLocaleString()} · {x.location || '线上'}</p><div className="mt-2 flex gap-2"><Button size="sm" onClick={() => event.mutate({ id: x.id, cancel: false })}>报名</Button><Button size="sm" variant="outline" onClick={() => event.mutate({ id: x.id, cancel: true })}>取消</Button></div></article>)}</CardContent></Card></div></div></div>
+  const queryClient = useQueryClient()
+  const [sessionId, setSessionId] = useState(() => sessionStorage.getItem('customer-service-session') || '')
+  const [message, setMessage] = useState('')
+  const [keyword, setKeyword] = useState('')
+  const [confirmAction, setConfirmAction] = useState<{ label: string; run: () => void } | null>(null)
+  const coursesQuery = useQuery({ queryKey: ['service', 'courses', keyword], queryFn: () => getCourses({ keyword: keyword || undefined, page: 1, page_size: 20 }) })
+  const eventsQuery = useQuery({ queryKey: ['service', 'events'], queryFn: () => getEvents({ status: 'upcoming', page: 1, page_size: 20 }) })
+  const messagesQuery = useQuery({ queryKey: ['service', 'messages', sessionId], queryFn: () => getChatMessages(sessionId), enabled: Boolean(sessionId) })
+  const sessionMutation = useMutation({ mutationFn: createChatSession, onSuccess: (session) => { setSessionId(session.session_id); sessionStorage.setItem('customer-service-session', session.session_id) } })
+  const messageMutation = useMutation({ mutationFn: (content: string) => createChatMessage(sessionId, content), onSuccess: async () => { setMessage(''); await queryClient.invalidateQueries({ queryKey: ['service', 'messages', sessionId] }) } })
+  const eventMutation = useMutation({ mutationFn: ({ eventId, cancel }: { eventId: number; cancel: boolean }) => cancel ? cancelEvent(eventId) : registerEvent(eventId), onSuccess: async (result) => { toast.success(result.status === 'cancelled' ? '已取消报名' : '报名已提交'); await queryClient.invalidateQueries({ queryKey: ['service', 'events'] }) } })
+  useEffect(() => { if (!sessionId && !sessionMutation.isPending && !sessionMutation.isError) sessionMutation.mutate() }, [sessionId]) // eslint-disable-line react-hooks/exhaustive-deps
+  const writing = messageMutation.isPending || eventMutation.isPending
+
+  return <div className="space-y-6">
+    <EditorialPageHeader eyebrow="Knowledge salon · conversation archive" title="客服中心" description="保存咨询对话，在同一工作区查找课程与近期活动。当前后端仅负责会话归档，不虚构尚未返回的 AI 回答。" />
+    <div className="grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(340px,.75fr)]">
+      <ArchiveCard title="咨询会话" index="CONVERSATION">
+        <div className="flex min-h-[520px] flex-col">
+          {sessionMutation.isPending && <LoadingState text="正在建立安全会话…" />}{sessionMutation.isError && <ErrorState title="无法建立会话" onRetry={() => sessionMutation.mutate()} />}
+          <div aria-live="polite" className="flex-1 space-y-3 overflow-y-auto pr-1">{messagesQuery.isLoading && <LoadingState />}{messagesQuery.isError && <ErrorState onRetry={() => messagesQuery.refetch()} />}{messagesQuery.data?.items.length === 0 && <EmptyState icon={<MessageSquareText className="h-8 w-8" />} title="开始一次咨询" description="消息会保存到当前账号的会话档案中。" />}{messagesQuery.data?.items.map((item) => <div key={item.id} className={`max-w-[85%] border p-3 text-sm leading-6 ${item.role === 'user' ? 'ml-auto border-wine/30 bg-wine/5' : 'border-bronze/40 bg-paper'}`}><p>{item.content}</p><p className="mt-1 text-[10px] text-muted-foreground">{item.role === 'user' ? '我' : '客服'} · {new Date(item.create_time).toLocaleTimeString()}</p></div>)}</div>
+          <form className="mt-5 flex gap-2 border-t border-bronze/30 pt-4" onSubmit={(event) => { event.preventDefault(); if (message.trim() && sessionId) messageMutation.mutate(message.trim()) }}><label htmlFor="service-message" className="sr-only">咨询内容</label><Input id="service-message" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="输入需要记录的咨询问题" /><Button type="submit" disabled={!sessionId || !message.trim() || messageMutation.isPending} aria-label="发送消息"><Send /></Button></form>
+        </div>
+      </ArchiveCard>
+      <div className="space-y-6">
+        <ArchiveCard title="课程索引" index="COURSES"><Input aria-label="搜索课程" value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="按名称或关键词搜索" />{coursesQuery.isLoading && <LoadingState />}{coursesQuery.isError && <ErrorState onRetry={() => coursesQuery.refetch()} />}<div className="mt-4 space-y-3">{coursesQuery.data?.items.map((course) => <article key={course.id} className="border-l-2 border-bronze pl-3"><div className="flex items-start justify-between gap-2"><h3 className="text-sm font-medium">{course.project_name}</h3><BookOpen className="h-4 w-4 shrink-0 text-wine" /></div><p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{course.description || course.target_audience || '暂无课程简介'}</p><p className="mt-2 font-mono text-xs">{course.duration || '时长待定'} · {course.price ?? '价格待定'}</p></article>)}</div></ArchiveCard>
+        <ArchiveCard title="近期活动" index="EVENTS">{eventsQuery.isLoading && <LoadingState />}{eventsQuery.isError && <ErrorState onRetry={() => eventsQuery.refetch()} />}<div className="space-y-3">{eventsQuery.data?.items.map((item) => <article key={item.id} className="border border-bronze/30 p-3"><div className="flex items-start justify-between gap-2"><div><h3 className="text-sm font-medium">{item.event_name}</h3><p className="mt-1 text-xs text-muted-foreground"><CalendarDays className="mr-1 inline h-3 w-3" />{new Date(item.start_time).toLocaleString()} · {item.location || item.event_type}</p></div><StatusStamp label={item.status} tone="info" /></div><div className="mt-3 flex gap-2"><Button size="sm" onClick={() => setConfirmAction({ label: `报名“${item.event_name}”`, run: () => eventMutation.mutate({ eventId: item.id, cancel: false }) })}>报名</Button><Button size="sm" variant="outline" onClick={() => setConfirmAction({ label: `取消“${item.event_name}”报名`, run: () => eventMutation.mutate({ eventId: item.id, cancel: true }) })}>取消报名</Button></div></article>)}</div></ArchiveCard>
+      </div>
+    </div>
+    <WriteConfirmDialog open={Boolean(confirmAction)} operationLabel={confirmAction?.label || '活动操作'} submitting={writing} onOpenChange={(open) => { if (!open) setConfirmAction(null) }} onConfirm={() => { confirmAction?.run(); setConfirmAction(null) }} />
+  </div>
 }

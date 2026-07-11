@@ -60,9 +60,9 @@ export default function ReportListPage() {
 
       {/* 筛选栏 */}
       <Card className="mb-4">
-        <CardContent className="flex items-center gap-4 pt-4">
+        <CardContent className="flex flex-col gap-3 pt-4 sm:flex-row sm:flex-wrap sm:items-center">
           <Select value={reportType} onValueChange={(v) => { setReportType(v); setPage(1) }}>
-            <SelectTrigger className="w-48">
+            <SelectTrigger className="w-full sm:w-48">
               <SelectValue placeholder="全部报告类型" />
             </SelectTrigger>
             <SelectContent>
@@ -74,7 +74,7 @@ export default function ReportListPage() {
           </Select>
 
           <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1) }}>
-            <SelectTrigger className="w-36">
+            <SelectTrigger className="w-full sm:w-36">
               <SelectValue placeholder="全部状态" />
             </SelectTrigger>
             <SelectContent>

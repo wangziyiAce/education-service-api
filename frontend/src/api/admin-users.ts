@@ -1,8 +1,8 @@
 import apiClient from '@/lib/api-client'
-type Envelope<T> = { code: number; message: string; data: T }
-export interface Role { id: number; role_code: string; role_name: string }
-export interface User { id: number; username: string; real_name: string; user_type: string; status: string }
-const unwrap = <T>(r: { data: Envelope<T> }) => r.data.data
-export const getRoles = () => apiClient.get<Envelope<{ items: Role[] }>>('/auth/roles').then(unwrap)
-export const getUsers = () => apiClient.get<Envelope<{ items: User[] }>>('/auth/users').then(unwrap)
-export const createUser = (data: { username: string; password: string; real_name: string; user_type: string; role_id: number }) => apiClient.post<Envelope<User>>('/auth/users', data).then(unwrap)
+import type { ManagedUser, RoleItem, UserCreateInput, UserPage } from '@/types/admin'
+
+interface Envelope<T> { code: number; message: string; data: T }
+const unwrap = <T>(response: { data: Envelope<T> }) => response.data.data
+export function getUsers(params: { keyword?: string; user_type?: string; page?: number; page_size?: number } = {}) { return apiClient.get<Envelope<UserPage>>('/auth/users', { params }).then(unwrap) }
+export function getRoles() { return apiClient.get<Envelope<{ items: RoleItem[] }>>('/auth/roles').then(unwrap).then((data) => data.items) }
+export function createUser(data: UserCreateInput) { return apiClient.post<Envelope<ManagedUser>>('/auth/users', data).then(unwrap) }

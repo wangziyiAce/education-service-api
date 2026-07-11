@@ -28,7 +28,8 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
       setLoading(true)
       getMe()
         .then((res) => {
-          useAuthStore.setState({ user: res.data })
+          // 认证 API 已在边界处解包统一响应，路由守卫只接收 CurrentUser。
+          useAuthStore.setState({ user: res })
         })
         .catch(() => {
           logout()

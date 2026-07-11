@@ -31,7 +31,15 @@ from config import (
     DB_POOL_RECYCLE,
     DB_POOL_SIZE,
     DB_POOL_TIMEOUT,
+    settings,
 )
+
+
+if not DATABASE_URL:
+    raise RuntimeError(
+        "未配置 DATABASE_URL，也未提供完整的 DB_USER、DB_PASSWORD、DB_NAME；"
+        "请在环境变量或 .env 中设置数据库连接。"
+    )
 
 
 engine = create_engine(
@@ -188,16 +196,17 @@ def init_db() -> None:
     使用 Alembic 或显式 SQL 迁移；本项目同步提供了 ``db_init.sql``。
     """
 
-    import models.crm  # noqa: F401
-    import models.chat  # noqa: F401
-    import models.report  # noqa: F401
-    import models.user  # noqa: F401
+    if not settings.is_development:
+        return
+
+    # 先加载全量模型，确保 create_all 能发现各业务模块的表，而非只创建局部表。
+    from models import load_all_models
+
+    load_all_models()
 
     Base.metadata.create_all(bind=engine)
 
-    # 自动补齐所有已存在表中缺失的列（开发期容错）
-    _auto_migrate_missing_columns()
-
+    # 不在启动期执行 ALTER TABLE，避免连接串指向错误数据库时改变既有结构。
     db = SessionLocal()
     try:
         seed_basic_users(db)

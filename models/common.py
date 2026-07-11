@@ -53,6 +53,7 @@ from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 # --- SQLAlchemy ---
+from sqlalchemy import BigInteger, Column, DateTime, Integer, func
 from sqlalchemy.orm import Session
 
 # --- 项目内部 ---
@@ -61,6 +62,39 @@ from utils.database import get_db
 
 # 日志实例
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# ORM 兼容基础设施
+# ============================================================
+# 客服 Agent 模型在合并前已约定从 models.common 读取这两个对象。保留该入口可让
+# CourseProject、EventLecture 等模型继续共用统一的主键和时间字段，而不需要修改
+# 业务模型的字段名或导入路径。
+# SQLite 只有声明为 INTEGER PRIMARY KEY 才会随插入自动生成主键；MySQL 仍使用
+# BIGINT。这个方言变体只影响本地测试/演示库，不改变生产表的主键容量。
+BigIntPrimaryKey = BigInteger().with_variant(Integer(), "sqlite")
+
+
+class TimestampMixin:
+    """为 ORM 模型提供统一的创建、更新时间字段。
+
+    该 Mixin 被聊天模型继承，字段由 SQLAlchemy 在写入和更新记录时维护；不继承
+    它的表仍可按自身业务语义单独定义时间字段。
+    """
+
+    create_time = Column(
+        DateTime,
+        nullable=False,
+        default=func.now(),
+        comment="创建时间",
+    )
+    update_time = Column(
+        DateTime,
+        nullable=False,
+        default=func.now(),
+        onupdate=func.now(),
+        comment="更新时间",
+    )
 
 # ============================================================
 # 第一部分：统一响应格式工具

@@ -12,7 +12,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from models.report import StudentFeedbackTicket
+from models.student import StudentFeedbackTicket
 from schemas.report import FeedbackTicketUpdate
 from utils.auth import CurrentUser, ensure_management_user, get_current_user
 from utils.database import get_db

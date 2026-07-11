@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "node scripts/verify-role-portal.mjs",
+    "test": "node scripts/verify-editorial-portal.mjs && node scripts/verify-operation-catalog.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"
