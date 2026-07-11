@@ -166,3 +166,29 @@ BCRYPT_COST: int = 12
 # 1440 分钟 = 24 小时，对应 API 文档 §4.2
 # 到达过期时间后用户需重新登录
 ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+
+
+# ============================================================
+# 七、LLM 直连配置（替代 Dify 的 AI 能力）
+# ============================================================
+# 企业智能助手使用 LLM 进行意图识别、NL2SQL、NL2API 等任务。
+# 使用 OpenAI SDK，兼容所有 OpenAI 协议的服务（OpenAI / DeepSeek / Ollama 等）。
+
+# --- LLM API Key ---
+# ⚠️ 不要提交到 Git！必须通过环境变量传入
+LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
+
+# --- LLM API 地址 ---
+# OpenAI:       https://api.openai.com/v1
+# DeepSeek:     https://api.deepseek.com/v1
+# Ollama (本地): http://localhost:11434/v1
+LLM_API_URL: str = os.getenv("LLM_API_URL", "https://api.openai.com/v1")
+
+# --- LLM 模型名称 ---
+# OpenAI: gpt-4o / gpt-4o-mini / gpt-4-turbo
+# DeepSeek: deepseek-chat
+LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
+
+# --- LLM 调用超时（秒）---
+# 意图识别和 SQL 生成通常 5-15 秒，给 60 秒余量
+LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "60"))

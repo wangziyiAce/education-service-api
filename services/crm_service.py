@@ -383,6 +383,11 @@ class EmployeeService:
         # 应用层检查：同一员工同一天只能有一份日报
         # 数据库层也有 uk_employee_date 唯一索引做兜底保护
 
+        # 基础兼容：如果前端只传了 raw_content 没传 content，自动用 raw_content 填充
+        # 后续接入 LLM 后，这里会调用 AI 做结构化提取
+        if data.raw_content and not data.content:
+            data.content = data.raw_content
+
         report = EmployeeDailyReport(**data.model_dump())
         self.db.add(report)
         self.db.commit()
