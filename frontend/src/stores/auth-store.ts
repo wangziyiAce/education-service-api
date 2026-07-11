@@ -58,6 +58,8 @@ export const useAuthStore = create<AuthState>()(
       login: async (credentials: LoginRequest) => {
         const res = await loginApi(credentials)
         get().setAuth(res.data)
+        const currentUser = await getMeApi()
+        set({ user: currentUser.data, isAuthenticated: true })
       },
 
       logout: () => {

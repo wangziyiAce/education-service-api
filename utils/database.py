@@ -189,6 +189,7 @@ def init_db() -> None:
     """
 
     import models.crm  # noqa: F401
+    import models.chat  # noqa: F401
     import models.report  # noqa: F401
     import models.user  # noqa: F401
 

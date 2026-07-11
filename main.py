@@ -62,7 +62,7 @@ def health_check() -> dict:
 
 
 # 路由注册集中放在入口文件，方便 Swagger 一眼看到系统模块。
-from routers import auth, crm, report, report_action, report_data, report_schedule, student  # noqa: E402
+from routers import auth, client, crm, report, report_action, report_data, report_schedule, student, user_admin  # noqa: E402
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["认证"])
 app.include_router(report.router, prefix="/api/v1/reports", tags=["智能报告"])
@@ -71,6 +71,9 @@ app.include_router(report_action.router, prefix="/api/v1/report-actions", tags=[
 app.include_router(report_data.router, prefix="/api/v1/report-data", tags=["报告事实数据"])
 app.include_router(crm.router, prefix="/api/v1/crm", tags=["CRM联动"])
 app.include_router(student.router, prefix="/api/v1/student", tags=["学生服务联动"])
+
+app.include_router(client.router)
+app.include_router(user_admin.router)
 
 
 if __name__ == "__main__":

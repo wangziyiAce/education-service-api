@@ -62,6 +62,9 @@ def register_routers(app: FastAPI) -> None:
         tags=["客户研判"],
     )
 
+    from routers.client import router as client_router
+    app.include_router(client_router)
+
     # ========================================
     # ★ 后续模块扩展示例（取消注释即可启用）
     # ========================================

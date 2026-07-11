@@ -23,6 +23,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { useAuthStore } from '@/stores/auth-store'
 import type { LoginRequest } from '@/types/auth'
+import { getDefaultRoute } from '@/lib/role-navigation'
 
 /** 登录表单校验 Schema */
 const loginSchema = z.object({
@@ -50,7 +51,7 @@ export default function LoginPage() {
 
   // 已登录 → 直接跳转
   if (isAuthenticated) {
-    return <Navigate to="/dashboard" replace />
+    return <Navigate to={getDefaultRoute(useAuthStore.getState().user?.role_code)} replace />
   }
 
   const onSubmit = async (data: LoginFormData) => {
@@ -58,7 +59,7 @@ export default function LoginPage() {
     setIsSubmitting(true)
     try {
       await login(data as LoginRequest)
-      navigate('/dashboard', { replace: true })
+      navigate(getDefaultRoute(useAuthStore.getState().user?.role_code), { replace: true })
     } catch (err: unknown) {
       // API Client 拦截器已处理 toast 提示，这里设置表单级错误
       const axiosError = err as { response?: { data?: { detail?: string }; status?: number } }

@@ -1,0 +1,10 @@
+import { access, readFile } from 'node:fs/promises'
+const root = new URL('../', import.meta.url)
+for (const file of ['src/lib/role-navigation.ts','src/router/RoleRoute.tsx','src/pages/CustomerServicePage.tsx','src/pages/StudentPortalPage.tsx','src/pages/admin/UserManagementPage.tsx']) await access(new URL(file, root))
+const router = await readFile(new URL('src/router/index.tsx', root), 'utf8')
+for (const marker of ['RoleLanding','RoleRoute','UserManagementPage','admin/users']) if (!router.includes(marker)) throw new Error(`missing role route: ${marker}`)
+const login = await readFile(new URL('src/pages/LoginPage.tsx', root), 'utf8')
+if (!login.includes('getDefaultRoute')) throw new Error('login is not role-aware')
+const sidebar = await readFile(new URL('src/components/layout/Sidebar.tsx', root), 'utf8')
+if (!sidebar.includes('studentServices')) throw new Error('student navigation is missing')
+console.log('role portal verified')
