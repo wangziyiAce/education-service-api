@@ -31,6 +31,15 @@ class CalculatedValues:
 
 
 @dataclass(frozen=True)
+class QualitySnapshot:
+    """保存单周期不可变的数据质量快照，避免调用方后续修改嵌套列表。"""
+
+    level: str
+    warnings: tuple[str, ...]
+    data_source: str | None
+
+
+@dataclass(frozen=True)
 class ComparisonQualityGate:
     """保存两期独立质量信息，并声明原值和趋势是否可展示。
 
@@ -38,8 +47,8 @@ class ComparisonQualityGate:
     ``warnings`` 给后续接口或回答层提供可展示、可排错的质量说明。
     """
 
-    current_quality: dict[str, Any]
-    previous_quality: dict[str, Any]
+    current_quality: QualitySnapshot
+    previous_quality: QualitySnapshot
     allow_values: bool
     allow_trend: bool
     limited_trend: bool
@@ -91,7 +100,7 @@ def evaluate_comparison_quality(
     current_quality: Mapping[str, Any],
     previous_quality: Mapping[str, Any],
     *,
-    compatible: bool = True,
+    compatible: bool,
 ) -> ComparisonQualityGate:
     """根据两期独立 DataQuality 生成比较门禁。
 
@@ -103,10 +112,10 @@ def evaluate_comparison_quality(
     if not compatible:
         raise ValueError("Schema、指标定义或周期口径不兼容，不能直接比较")
 
-    current = dict(current_quality)
-    previous = dict(previous_quality)
-    current_level = _quality_level(current, "current")
-    previous_level = _quality_level(previous, "previous")
+    current = _quality_snapshot(current_quality, "current")
+    previous = _quality_snapshot(previous_quality, "previous")
+    current_level = current.level
+    previous_level = previous.level
     levels = {current_level, previous_level}
 
     # empty/failed 说明至少一期没有可用于推导趋势的数据，必须失败关闭。
@@ -131,9 +140,24 @@ def _quality_level(quality: Mapping[str, Any], period_name: str) -> str:
     return str(level)
 
 
+def _quality_snapshot(quality: Mapping[str, Any], period_name: str) -> QualitySnapshot:
+    """把外部质量字典规范化为不共享嵌套可变对象的只读快照。"""
+    level = _quality_level(quality, period_name)
+    raw_warnings = quality.get("warnings", []) or []
+    if isinstance(raw_warnings, (str, bytes)):
+        raise ValueError(f"{period_name} warnings 必须是列表")
+    return QualitySnapshot(
+        level=level,
+        warnings=tuple(str(warning) for warning in raw_warnings),
+        data_source=(
+            str(quality["data_source"]) if quality.get("data_source") is not None else None
+        ),
+    )
+
+
 def _quality_warnings(
-    current: Mapping[str, Any],
-    previous: Mapping[str, Any],
+    current: QualitySnapshot,
+    previous: QualitySnapshot,
     current_level: str,
     previous_level: str,
 ) -> list[str]:
@@ -145,6 +169,6 @@ def _quality_warnings(
     ):
         if level != "ok":
             warnings.append(f"{label}数据质量为 {level}")
-        for warning in quality.get("warnings", []) or []:
+        for warning in quality.warnings:
             warnings.append(f"{label}：{warning}")
     return warnings

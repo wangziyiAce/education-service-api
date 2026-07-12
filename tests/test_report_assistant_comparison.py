@@ -50,9 +50,10 @@ def test_warning_retains_comparison_with_independent_quality():
     """单期 warning 不覆盖另一周期，并允许带限制地继续比较。"""
     current = {"level": "warning", "warnings": ["部分来源缺失"]}
     previous = {"level": "ok", "warnings": []}
-    gate = evaluate_comparison_quality(current, previous)
-    assert gate.current_quality == current
-    assert gate.previous_quality == previous
+    gate = evaluate_comparison_quality(current, previous, compatible=True)
+    assert gate.current_quality.level == "warning"
+    assert gate.current_quality.warnings == ("部分来源缺失",)
+    assert gate.previous_quality.level == "ok"
     assert gate.allow_values is True
     assert gate.allow_trend is True
     assert gate.limited_trend is True
@@ -62,7 +63,9 @@ def test_warning_retains_comparison_with_independent_quality():
 @pytest.mark.parametrize("blocked_level", ["empty", "failed"])
 def test_empty_or_failed_blocks_trend(blocked_level):
     """任一期为空或失败时仅保留原值入口，不输出趋势。"""
-    gate = evaluate_comparison_quality({"level": blocked_level}, {"level": "ok"})
+    gate = evaluate_comparison_quality(
+        {"level": blocked_level}, {"level": "ok"}, compatible=True
+    )
     assert gate.allow_values is True
     assert gate.allow_trend is False
     assert gate.limited_trend is False
@@ -72,7 +75,9 @@ def test_empty_or_failed_blocks_trend(blocked_level):
 
 def test_degraded_allows_only_limited_trend():
     """degraded 可展示原值及有限趋势，但必须携带限制标记。"""
-    gate = evaluate_comparison_quality({"level": "ok"}, {"level": "degraded"})
+    gate = evaluate_comparison_quality(
+        {"level": "ok"}, {"level": "degraded"}, compatible=True
+    )
     assert gate.allow_values is True
     assert gate.allow_trend is True
     assert gate.limited_trend is True
@@ -84,7 +89,26 @@ def test_explicit_incompatibility_rejects_comparison():
         evaluate_comparison_quality({"level": "ok"}, {"level": "ok"}, compatible=False)
 
 
+def test_compatibility_argument_is_mandatory():
+    """调用方未完成兼容性校验时，API 不能用宽松默认值继续比较。"""
+    with pytest.raises(TypeError, match="compatible"):
+        evaluate_comparison_quality({"level": "ok"}, {"level": "ok"})
+
+
+def test_quality_snapshot_is_not_changed_by_input_warning_mutation():
+    """门禁创建后必须与调用方的嵌套 warnings 列表解除共享引用。"""
+    current = {"level": "warning", "warnings": ["初始限制"]}
+    gate = evaluate_comparison_quality(current, {"level": "ok"}, compatible=True)
+
+    current["warnings"].append("事后修改")
+
+    assert gate.current_quality.warnings == ("初始限制",)
+    assert "事后修改" not in gate.warnings
+
+
 def test_unknown_quality_level_fails_closed():
     """未知质量等级不能被误判为正常数据。"""
     with pytest.raises(ValueError, match="数据质量等级"):
-        evaluate_comparison_quality({"level": "invented"}, {"level": "ok"})
+        evaluate_comparison_quality(
+            {"level": "invented"}, {"level": "ok"}, compatible=True
+        )
