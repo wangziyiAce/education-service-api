@@ -59,6 +59,14 @@ def test_explicit_chinese_months_use_complete_calendar_months() -> None:
     assert (period.previous_start, period.previous_end) == (date(2026, 4, 1), date(2026, 4, 30))
 
 
+def test_explicit_chinese_months_assign_later_month_as_current_regardless_of_order() -> None:
+    """用户先说较早月份时，解析器仍应按时间顺序分配当前期和前一期。"""
+    period = resolve_comparison_period("比较2026年4月和2026年5月", now=NOW)
+
+    assert (period.current_start, period.current_end) == (date(2026, 5, 1), date(2026, 5, 31))
+    assert (period.previous_start, period.previous_end) == (date(2026, 4, 1), date(2026, 4, 30))
+
+
 def test_current_report_uses_preceding_equal_length_period() -> None:
     """当前报告周期应整体向前平移相同天数，供已有报告详情页发起比较。"""
     period = resolve_comparison_period(
@@ -82,3 +90,8 @@ def test_unsupported_or_overlapping_request_is_rejected() -> None:
     with pytest.raises(ValueError, match="不支持"):
         resolve_comparison_period("最近7天和本周", now=NOW)
 
+
+def test_rolling_period_with_extra_period_intent_is_rejected() -> None:
+    """匹配滚动窗口后仍有额外周期意图时必须拒绝，不能静默忽略歧义文本。"""
+    with pytest.raises(ValueError, match="不支持"):
+        resolve_comparison_period("最近7天和前7天再加本周", now=NOW)

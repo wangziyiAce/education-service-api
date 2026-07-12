@@ -48,6 +48,10 @@ def resolve_comparison_period(
     elif "本月" in normalized and "上月" in normalized:
         period = _resolve_month_to_date(today)
     elif match := re.search(r"最近(7|30)天(?:和|与|对比)前(?:面)?\1天", normalized):
+        # 滚动窗口主表达命中后仍要检查其他周期关键词；否则“再加本周”会被静默忽略。
+        remaining = normalized[: match.start()] + normalized[match.end() :]
+        if any(keyword in remaining for keyword in ("本周", "上周", "本月", "上月", "当前报告", "上一期")):
+            raise ValueError("不支持同时包含多个周期意图的比较请求")
         period = _resolve_rolling_days(today, int(match.group(1)))
     else:
         months = _EXPLICIT_MONTH_PATTERN.findall(normalized)
@@ -110,16 +114,17 @@ def _resolve_rolling_days(today: date, days: int) -> ComparisonPeriod:
 
 
 def _resolve_explicit_months(months: list[tuple[str, str]]) -> ComparisonPeriod:
-    """按用户书写顺序解析两个完整公历月，第一个月份作为当前比较期。"""
-    ranges = [_calendar_month(int(year), int(month)) for year, month in months]
+    """解析两个完整公历月，并固定把较晚月份分配为当前比较期。"""
+    ordered_months = sorted(months, key=lambda item: (int(item[0]), int(item[1])), reverse=True)
+    ranges = [_calendar_month(int(year), int(month)) for year, month in ordered_months]
     return ComparisonPeriod(
         current_start=ranges[0][0],
         current_end=ranges[0][1],
         previous_start=ranges[1][0],
         previous_end=ranges[1][1],
-        current_label=f"{months[0][0]}年{int(months[0][1])}月",
-        previous_label=f"{months[1][0]}年{int(months[1][1])}月",
-        assumptions=["明确月份按完整公历月计算，允许两个月份天数不同"],
+        current_label=f"{ordered_months[0][0]}年{int(ordered_months[0][1])}月",
+        previous_label=f"{ordered_months[1][0]}年{int(ordered_months[1][1])}月",
+        assumptions=["明确月份按完整公历月计算；较晚月份作为当前期，允许两个月份天数不同"],
     )
 
 
