@@ -747,3 +747,79 @@ def _sanitize_psych_content(content: dict[str, Any]) -> dict[str, Any]:
                     for item in items
                 ]
     return safe
+def tool_compare_report_metrics(*, report_type: str, comparison_period: Any,
+                                metric_names: list[str], current_user: Any,
+                                db: Session) -> AssistantToolResult:
+    """只读比较两个精确周期的受控指标，并生成稳定、不可交换的证据。"""
+    from models.report import ReportGeneration
+    from services.reporting.aggregators import aggregate_report
+    from services.reporting.assistant.comparison import calculate_values, evaluate_comparison_quality
+    from services.reporting.assistant.guardrails import validate_comparison_access
+    from services.reporting.assistant.metric_catalog import get_metric_definition
+    from services.reporting.assistant.metric_resolvers import extract_metric_values
+    from services.reporting.assistant.schemas import EvidenceItem, MetricComparison
+
+    report_definition = get_report_definition(report_type)
+    if not metric_names:
+        raise ValueError("metric_names 不能为空")
+    definitions = [get_metric_definition(report_type, name) for name in metric_names]
+    validate_comparison_access(current_user, report_definition, definitions)
+
+    def load(start: date, end: date) -> dict[str, Any]:
+        report = (db.query(ReportGeneration).filter_by(
+            report_type=report_type, period_start=start, period_end=end, status="completed"
+        ).order_by(ReportGeneration.update_time.desc(), ReportGeneration.create_time.desc(),
+                   ReportGeneration.id.desc()).first())
+        if report:
+            if not _can_access_report(report, current_user):
+                raise PermissionError("无权访问对比报告")
+            return {"content": report.report_content or {}, "quality": report.data_quality or {},
+                    "id": report.id, "schema": report.schema_version}
+        aggregated = aggregate_report(db, report_type, start, end, {})
+        quality = aggregated.data_quality.model_dump()
+        return {"content": aggregated.content, "quality": quality, "id": 0,
+                "schema": report_definition.schema_version}
+
+    current = load(comparison_period.current_start, comparison_period.current_end)
+    previous = load(comparison_period.previous_start, comparison_period.previous_end)
+    compatible = current["schema"] == previous["schema"] == report_definition.schema_version
+    gate = evaluate_comparison_quality(current["quality"], previous["quality"], compatible=compatible)
+    comparisons: list[dict[str, Any]] = []
+    evidence: list[dict[str, Any]] = []
+    for definition in definitions:
+        current_map = {tuple(sorted(x.dimension.items())): x for x in extract_metric_values(definition, current["content"])}
+        previous_map = {tuple(sorted(x.dimension.items())): x for x in extract_metric_values(definition, previous["content"])}
+        for key in sorted(set(current_map) | set(previous_map)):
+            dimension = dict(key)
+            current_value = current_map[key].value if key in current_map else None
+            previous_value = previous_map[key].value if key in previous_map else None
+            values = gate.apply(calculate_values(current_value, previous_value, value_type=definition.value_type))
+            prefix = f"CMP-{report_type}-{definition.metric_name}-{len(comparisons)+1}"
+            ids = {role: f"{prefix}-{role}" for role in ("current", "previous", "delta", "change_rate")}
+            comparisons.append(MetricComparison(
+                report_type=report_type, metric_name=definition.metric_name, label=definition.label,
+                dimension=dimension, current_value=current_value, previous_value=previous_value,
+                delta=values.delta, change_rate=values.change_rate, direction=values.direction,
+                unit=definition.unit, current_evidence_id=ids["current"],
+                previous_evidence_id=ids["previous"],
+            ).model_dump())
+            for role, value, label, source_id in (
+                ("current", current_value, comparison_period.current_label, current["id"]),
+                ("previous", previous_value, comparison_period.previous_label, previous["id"]),
+                ("delta", values.delta, f"{comparison_period.current_label}-{comparison_period.previous_label}", 0),
+                ("change_rate", values.change_rate, f"{comparison_period.current_label}/{comparison_period.previous_label}", 0),
+            ):
+                formula = "current - previous" if role == "delta" else "(current - previous) / abs(previous)" if role == "change_rate" else None
+                evidence.append(EvidenceItem(
+                    evidence_id=ids[role], metric_name=definition.metric_name,
+                    label=f"{definition.label}-{role}", value=value, unit=definition.unit,
+                    source_report_id=source_id, source_tables=[path[0] for path in definition.source_fields],
+                    formula=formula, report_type=report_type, period_label=label,
+                    comparison_role=role, dimension=dimension, source="compare_report_metrics",
+                    reference=".".join(definition.value_path or (definition.resolver_name or "",)),
+                ).model_dump())
+    return AssistantToolResult(tool_name="compare_report_metrics", status="success", data={
+        "comparison": comparisons, "evidence": evidence,
+        "current_data_quality": current["quality"], "previous_data_quality": previous["quality"],
+        "periods": comparison_period.model_dump(), "assumptions": list(comparison_period.assumptions),
+    })

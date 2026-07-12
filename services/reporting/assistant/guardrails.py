@@ -580,3 +580,10 @@ def _metric_label(key: str) -> str:
         "conversion_rate": "转化率",
     }
     return labels.get(key, key)
+def validate_comparison_access(current_user: Any, definition: Any, metrics: list[Any]) -> None:
+    """在数据访问前校验报告角色和敏感指标权限。"""
+    role = getattr(current_user, "role_code", None)
+    if role != "admin" and role not in (definition.allowed_roles or ()):
+        raise PermissionError("无权访问该报告类型")
+    if any(item.sensitive for item in metrics) and role not in ("admin", "manager", "team_leader"):
+        raise PermissionError("无权访问敏感对比指标")
