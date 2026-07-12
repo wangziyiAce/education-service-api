@@ -17,6 +17,8 @@ Iteration 1 提供三个工具：
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 from datetime import date, datetime
 from typing import Any, Optional
 
@@ -782,20 +784,47 @@ def tool_compare_report_metrics(*, report_type: str, comparison_period: Any,
 
     current = load(comparison_period.current_start, comparison_period.current_end)
     previous = load(comparison_period.previous_start, comparison_period.previous_end)
-    compatible = current["schema"] == previous["schema"] == report_definition.schema_version
+    metric_signature = hashlib.sha256("|".join(
+        f"{item.report_type}:{item.metric_name}:{item.resolver_name}:{item.value_path}:"
+        f"{item.value_type}:{item.dimension_name}" for item in definitions
+    ).encode()).hexdigest()
+    current_signature = current["content"].get("_metric_definition_signature", metric_signature)
+    previous_signature = previous["content"].get("_metric_definition_signature", metric_signature)
+    current_days = (comparison_period.current_end - comparison_period.current_start).days
+    previous_days = (comparison_period.previous_end - comparison_period.previous_start).days
+    compatible = (
+        current["schema"] == previous["schema"] == report_definition.schema_version
+        and current_signature == previous_signature == metric_signature
+        and current_days == previous_days
+        and comparison_period.previous_end < comparison_period.current_start
+    )
     gate = evaluate_comparison_quality(current["quality"], previous["quality"], compatible=compatible)
     comparisons: list[dict[str, Any]] = []
     evidence: list[dict[str, Any]] = []
     for definition in definitions:
-        current_map = {tuple(sorted(x.dimension.items())): x for x in extract_metric_values(definition, current["content"])}
-        previous_map = {tuple(sorted(x.dimension.items())): x for x in extract_metric_values(definition, previous["content"])}
+        def exact_map(content: dict[str, Any]) -> dict[tuple[tuple[str, str], ...], Any]:
+            """按完整维度键对齐；重复维度会拒绝，避免后一个值静默覆盖前一个值。"""
+            result = {}
+            for extracted in extract_metric_values(definition, content):
+                key = tuple(sorted(extracted.dimension.items()))
+                if key in result:
+                    raise ValueError(f"指标 {definition.metric_name} 存在重复维度: {dict(key)}")
+                result[key] = extracted
+            return result
+        current_map = exact_map(current["content"])
+        previous_map = exact_map(previous["content"])
         for key in sorted(set(current_map) | set(previous_map)):
             dimension = dict(key)
             current_value = current_map[key].value if key in current_map else None
             previous_value = previous_map[key].value if key in previous_map else None
             values = gate.apply(calculate_values(current_value, previous_value, value_type=definition.value_type))
-            prefix = f"CMP-{report_type}-{definition.metric_name}-{len(comparisons)+1}"
-            ids = {role: f"{prefix}-{role}" for role in ("current", "previous", "delta", "change_rate")}
+            def evidence_id(role: str) -> str:
+                canonical = json.dumps(dimension, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                digest = hashlib.sha256(
+                    f"{report_type}|{definition.metric_name}|{canonical}|{role}".encode()
+                ).digest()
+                return f"E{int.from_bytes(digest[:10], 'big')}"
+            ids = {role: evidence_id(role) for role in ("current", "previous", "delta", "change_rate")}
             comparisons.append(MetricComparison(
                 report_type=report_type, metric_name=definition.metric_name, label=definition.label,
                 dimension=dimension, current_value=current_value, previous_value=previous_value,
