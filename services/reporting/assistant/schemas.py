@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Any, Literal, Optional
 from uuid import UUID, uuid4
@@ -236,6 +237,54 @@ class ReportConversationContext(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class ComparisonPeriod(BaseModel):
+    """描述当前周期与上一周期，确保后续计算使用同一组日期边界。"""
+
+    current_start: date
+    current_end: date
+    previous_start: date
+    previous_end: date
+    current_label: str
+    previous_label: str
+    assumptions: list[str] = Field(default_factory=list)
+
+
+class MetricComparison(BaseModel):
+    """承载单个指标的确定性对比结果，不把缺失值错误转换为零。"""
+
+    report_type: str
+    metric_name: str
+    label: str
+    dimension: dict[str, str] = Field(default_factory=dict)
+    current_value: Decimal | None
+    previous_value: Decimal | None
+    delta: Decimal | None
+    change_rate: Decimal | None
+    direction: Literal["up", "down", "flat", "unknown"]
+    unit: str | None = None
+    current_evidence_id: str
+    previous_evidence_id: str
+
+
+class ComparisonDataQuality(BaseModel):
+    """记录双周期质量门禁，告诉展示层哪些结论可以安全输出。"""
+
+    current: dict[str, Any] = Field(default_factory=dict)
+    previous: dict[str, Any] = Field(default_factory=dict)
+    allow_values: bool = True
+    allow_trend: bool = True
+    warnings: list[str] = Field(default_factory=list)
+
+
+class RelationshipSections(BaseModel):
+    """把跨报告关系拆成四类陈述，明确事实与因果推测的边界。"""
+
+    confirmed_facts: list[str] = Field(default_factory=list)
+    related_signals: list[str] = Field(default_factory=list)
+    possible_explanations: list[str] = Field(default_factory=list)
+    cannot_confirm: list[str] = Field(default_factory=list)
+
+
 class EvidenceItem(BaseModel):
     """回答中一个数字或结论的证据来源（Iteration 2A.1 增强版）。
 
@@ -260,6 +309,16 @@ class EvidenceItem(BaseModel):
     source_report_id: int = Field(default=0, description="来源报告 ID")
     source_tables: list[str] = Field(default_factory=list, description="数据来源表")
     formula: Optional[str] = Field(default=None, description="指标计算公式")
+    report_type: Optional[str] = Field(default=None, description="对比证据所属的报告类型")
+    period_label: Optional[str] = Field(default=None, description="证据对应的可读周期标签")
+    comparison_role: Optional[Literal["current", "previous", "delta", "change_rate"]] = Field(
+        default=None,
+        description="证据在对比链路中的角色；旧版非对比证据保持为空",
+    )
+    dimension: dict[str, str] = Field(
+        default_factory=dict,
+        description="维度指标的定位条件，例如渠道名称；无维度指标保持空字典",
+    )
     # 向后兼容字段
     source: str = Field(default="", description="来源工具名")
     reference: str = Field(default="", description="数据路径")
@@ -411,6 +470,22 @@ class ReportAssistantMessageResponse(BaseModel):
     data_quality: Optional[dict[str, Any]] = Field(
         default=None,
         description="如有关联报告，其数据质量信息",
+    )
+    comparison_period: Optional[ComparisonPeriod] = Field(
+        default=None,
+        description="对比请求解析出的当前与上一周期；非对比回答保持为空",
+    )
+    metric_comparisons: list[MetricComparison] = Field(
+        default_factory=list,
+        description="由 Python 确定性计算的指标对比列表",
+    )
+    comparison_data_quality: Optional[ComparisonDataQuality] = Field(
+        default=None,
+        description="双周期数据质量及趋势输出门禁",
+    )
+    relationship_sections: Optional[RelationshipSections] = Field(
+        default=None,
+        description="跨报告分析的事实、信号、可能解释和不可确认事项",
     )
     conversation_context: ReportConversationContext = Field(
         ...,
