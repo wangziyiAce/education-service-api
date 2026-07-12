@@ -7,7 +7,7 @@
  * 3. 提交 → POST /reports/generate (202) → 跳转详情页
  */
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -22,6 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import PageHeader from '@/components/shared/PageHeader'
 import LoadingState from '@/components/shared/LoadingState'
 import { getReportTypes, generateReport } from '@/api/reports'
+import type { ReportGenerateRequest } from '@/types/report'
 import { toast } from 'sonner'
 
 const generateSchema = z.object({
@@ -33,9 +34,16 @@ const generateSchema = z.object({
 
 type GenerateFormData = z.infer<typeof generateSchema>
 
+/** 生成幂等键，表单提交时创建一次，错误重试时复用 */
+function createIdempotencyKey(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
 export default function ReportGeneratePage() {
   const navigate = useNavigate()
   const [filters, setFilters] = useState<Record<string, string>>({})
+  // 幂等键在表单提交时创建一次，网络重试时复用，防止重复创建报告任务
+  const idempotencyKeyRef = useRef<string | null>(null)
 
   // 获取报告类型列表
   const { data: typesData, isLoading: typesLoading } = useQuery({
@@ -54,13 +62,20 @@ export default function ReportGeneratePage() {
 
   // 生成报告 mutation
   const generateMutation = useMutation({
-    mutationFn: generateReport,
+    mutationFn: (data: ReportGenerateRequest) => {
+      // 复用已有幂等键或生成新键
+      if (!idempotencyKeyRef.current) {
+        idempotencyKeyRef.current = createIdempotencyKey()
+      }
+      return generateReport(data, idempotencyKeyRef.current)
+    },
     onSuccess: (res) => {
       toast.success('报告任务已创建，正在生成...')
       navigate(`/reports/${res.data.id}`, { replace: true })
     },
     onError: () => {
-      toast.error('创建报告任务失败')
+      // 保留幂等键，允许用户修正参数后重试时不重复创建
+      toast.error('创建报告任务失败，请检查参数后重试')
     },
   })
 

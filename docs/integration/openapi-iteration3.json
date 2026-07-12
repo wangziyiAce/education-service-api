@@ -1311,7 +1311,8 @@
                   "type": "number"
                 },
                 {
-                  "type": "string"
+                  "type": "string",
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
                 },
                 {
                   "type": "null"
@@ -1332,7 +1333,8 @@
                   "type": "number"
                 },
                 {
-                  "type": "string"
+                  "type": "string",
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
                 },
                 {
                   "type": "null"
@@ -2593,6 +2595,7 @@
           "content": {
             "application/json": {
               "schema": {
+                "additionalProperties": true,
                 "type": "object",
                 "title": "Request"
               }
@@ -2640,6 +2643,7 @@
           "content": {
             "application/json": {
               "schema": {
+                "additionalProperties": true,
                 "type": "object",
                 "title": "Request"
               }
@@ -3988,6 +3992,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Delete Schedule Api V1 Report Schedules  Schedule Id  Delete"
                 }
               }
@@ -4137,6 +4142,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Create Application Material Api V1 Report Data Application Materials Post"
                 }
               }
@@ -4191,7 +4197,8 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "type": "object"
+                    "type": "object",
+                    "additionalProperties": true
                   },
                   "title": "Response List Application Materials Api V1 Report Data Application Materials Get"
                 }
@@ -4225,6 +4232,7 @@
               "application/json": {
                 "schema": {
                   "items": {
+                    "additionalProperties": true,
                     "type": "object"
                   },
                   "type": "array",
@@ -4262,6 +4270,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Create Channel Cost Api V1 Report Data Channel Costs Post"
                 }
@@ -4300,6 +4309,7 @@
               "application/json": {
                 "schema": {
                   "items": {
+                    "additionalProperties": true,
                     "type": "object"
                   },
                   "type": "array",
@@ -4337,6 +4347,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Create Contract Api V1 Report Data Contracts Post"
                 }
@@ -4375,6 +4386,7 @@
               "application/json": {
                 "schema": {
                   "items": {
+                    "additionalProperties": true,
                     "type": "object"
                   },
                   "type": "array",
@@ -4412,6 +4424,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Create Payment Api V1 Report Data Payments Post"
                 }
@@ -5676,7 +5689,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "format": "binary"
+                "contentMediaType": "application/octet-stream"
               },
               {
                 "type": "null"
@@ -5738,7 +5751,8 @@
                 "type": "number"
               },
               {
-                "type": "string"
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
               }
             ],
             "title": "Cost Amount",
@@ -5862,10 +5876,12 @@
       "ComparisonDataQuality": {
         "properties": {
           "current": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Current"
           },
           "previous": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Previous"
           },
@@ -5975,7 +5991,8 @@
                 "type": "number"
               },
               {
-                "type": "string"
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
               }
             ],
             "title": "Contract Amount"
@@ -6017,7 +6034,8 @@
                 "type": "number"
               },
               {
-                "type": "string"
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
               }
             ],
             "title": "Payment Amount"
@@ -7179,7 +7197,8 @@
           "current_value": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
               },
               {
                 "type": "null"
@@ -7190,7 +7209,8 @@
           "previous_value": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
               },
               {
                 "type": "null"
@@ -7201,7 +7221,8 @@
           "delta": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
               },
               {
                 "type": "null"
@@ -7212,7 +7233,8 @@
           "change_rate": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
               },
               {
                 "type": "null"
@@ -7358,6 +7380,7 @@
             ]
           },
           "rule_content": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Rule Content",
             "description": "研判规则配置（JSON）"
@@ -7417,6 +7440,7 @@
           "rule_content": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -7599,6 +7623,7 @@
             "default": 0
           },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Metadata",
             "description": "展示需要的最小元数据（如 risk_score、risk_level）"
@@ -7694,7 +7719,8 @@
                 "type": "number"
               },
               {
-                "type": "string"
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
               },
               {
                 "type": "null"
@@ -7753,7 +7779,8 @@
           "target_value": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
               },
               {
                 "type": "null"
@@ -7776,7 +7803,8 @@
           "actual_value": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
               },
               {
                 "type": "null"
@@ -7894,7 +7922,8 @@
                 "type": "number"
               },
               {
-                "type": "string"
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
               },
               {
                 "type": "null"
@@ -7908,7 +7937,8 @@
                 "type": "number"
               },
               {
-                "type": "string"
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
               },
               {
                 "type": "null"
@@ -8090,6 +8120,7 @@
           "data_quality": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -8330,6 +8361,7 @@
           "report_content": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -8352,6 +8384,7 @@
           "data_quality": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -8363,6 +8396,7 @@
           "request_filters": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -8374,6 +8408,7 @@
           "aggregated_data_snapshot": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -8496,6 +8531,7 @@
             "description": "统计周期结束"
           },
           "filters": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Filters",
             "description": "报告筛选条件"
@@ -8578,10 +8614,12 @@
             "title": "Title Template"
           },
           "filters": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Filters"
           },
           "recipients": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Recipients"
           }
@@ -8633,6 +8671,7 @@
           "filters": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -8644,6 +8683,7 @@
           "recipients": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -8806,6 +8846,7 @@
           "filters": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -8817,6 +8858,7 @@
           "recipients": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -8952,6 +8994,7 @@
             "title": "Available Filters"
           },
           "json_schema": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Json Schema"
           }
@@ -9185,6 +9228,13 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",

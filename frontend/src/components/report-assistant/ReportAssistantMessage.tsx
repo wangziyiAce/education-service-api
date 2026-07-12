@@ -173,19 +173,29 @@ export default function ReportAssistantMessage({ message, onFollowUp, isSending 
         {/* assistant 消息的附加内容（只在 completed 状态展示） */}
         {isAssistant && message.status === 'completed' && (
           <>
-            {/* Iteration 3：比较表格（permission_denied 时隐藏） */}
-            {'comparison' in message && (message as any).comparison && (
+            {/* Iteration 3：比较表格（由 ReportAssistantPanel 在 completed 状态下映射） */}
+            {message.comparison && message.comparison.length > 0 && (
               <ReportAssistantComparison
-                items={(message as any).comparison}
-                currentLabel={(message as any).comparison_period?.current_label}
-                previousLabel={(message as any).comparison_period?.previous_label}
+                items={message.comparison}
+                currentLabel={message.comparison_period?.current_label}
+                previousLabel={message.comparison_period?.previous_label}
               />
             )}
 
-            {/* Iteration 3：关系分析区块（permission_denied 时隐藏） */}
-            {'relationship_sections' in message && (message as any).relationship_sections && (
+            {/* Iteration 3：双周期数据质量 */}
+            {message.comparison_data_quality && (
+              <ReportAssistantDataQuality
+                dataQuality={{
+                  status: message.comparison_data_quality.allow_values ? 'ok' : 'warning',
+                  warnings: message.comparison_data_quality.warnings || [],
+                }}
+              />
+            )}
+
+            {/* Iteration 3：关系分析区块 */}
+            {message.relationship_sections && (
               <ReportAssistantRelationship
-                sections={(message as any).relationship_sections}
+                sections={message.relationship_sections}
               />
             )}
 

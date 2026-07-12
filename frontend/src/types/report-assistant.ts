@@ -172,6 +172,14 @@ export interface ReportAssistantMessageResponse {
   data_quality?: AssistantDataQuality | null
   /** 错误码（status=error 时） */
   error_code?: string | null
+  /** Iteration 3：对比请求解析出的当前与上一周期（后端字段 metric_comparisons） */
+  comparison_period?: ComparisonPeriod | null
+  /** Iteration 3：由 Python 确定性计算的指标对比列表（后端字段 metric_comparisons） */
+  metric_comparisons?: MetricComparison[]
+  /** Iteration 3：双周期数据质量及趋势输出门禁 */
+  comparison_data_quality?: ComparisonDataQuality | null
+  /** Iteration 3：跨报告分析的四区结构化事实与信号 */
+  relationship_sections?: RelationshipSections | null
 }
 
 // ============================================================

@@ -245,6 +245,11 @@ export default function ReportAssistantPanel({ open, onClose, initialReportId, i
         dataQuality: response.data_quality,
         needsClarification: response.needs_clarification,
         clarificationQuestion: response.clarification_question,
+        // Iteration 3 字段：从后端响应映射到消息状态，仅用于展示，不计算
+        comparison: response.metric_comparisons,
+        comparison_period: response.comparison_period,
+        comparison_data_quality: response.comparison_data_quality,
+        relationship_sections: response.relationship_sections,
       })
 
       // 如果后端建议追问中包含"检查生成状态"，且状态为 generating

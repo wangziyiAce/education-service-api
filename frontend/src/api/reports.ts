@@ -29,12 +29,16 @@ export function getReportTypes() {
   return apiClient.get<ReportTypeDefinition[]>('/reports/types')
 }
 
-/** 创建报告生成任务（返回 202 + task_id） */
-export function generateReport(data: ReportGenerateRequest) {
-  // 生成幂等键，防止重复提交
-  const idempotencyKey = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+/** 创建报告生成任务（返回 202 + task_id）。
+ *
+ * @param data         报告生成请求体
+ * @param idempotencyKey  可选的幂等键；如果提供则复用，否则自动生成。
+ *                        网络重试时必须传入同一个键，防止重复创建任务。
+ */
+export function generateReport(data: ReportGenerateRequest, idempotencyKey?: string) {
+  const key = idempotencyKey || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
   return apiClient.post<ReportTaskResponse>('/reports/generate', data, {
-    headers: { 'Idempotency-Key': idempotencyKey },
+    headers: { 'Idempotency-Key': key },
   })
 }
 
