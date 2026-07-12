@@ -40,6 +40,19 @@ def resolve_comparison_period(
     """
     today = now.date()
     normalized = "".join(message.split())
+    rolling_match = re.search(r"最近(7|30)天(?:和|与|对比)前(?:面)?\1天", normalized)
+    explicit_months = _EXPLICIT_MONTH_PATTERN.findall(normalized)
+
+    # 先识别所有受支持周期族，再进入具体分支。这样结果不会由 if/elif 的先后顺序决定。
+    period_families = [
+        "current_report" if any(keyword in normalized for keyword in ("当前报告", "上一期", "前一期")) else None,
+        "natural_week" if any(keyword in normalized for keyword in ("本周", "上周")) else None,
+        "month_to_date" if any(keyword in normalized for keyword in ("本月", "上月")) else None,
+        "rolling" if rolling_match else None,
+        "explicit_months" if len(explicit_months) == 2 else None,
+    ]
+    if sum(family is not None for family in period_families) > 1:
+        raise ValueError("不支持同时包含多个周期意图的比较请求")
 
     if "当前报告" in normalized and ("上一期" in normalized or "前一期" in normalized):
         period = _resolve_current_report(current_report_period)
@@ -47,16 +60,11 @@ def resolve_comparison_period(
         period = _resolve_completed_natural_weeks(today)
     elif "本月" in normalized and "上月" in normalized:
         period = _resolve_month_to_date(today)
-    elif match := re.search(r"最近(7|30)天(?:和|与|对比)前(?:面)?\1天", normalized):
-        # 滚动窗口主表达命中后仍要检查其他周期关键词；否则“再加本周”会被静默忽略。
-        remaining = normalized[: match.start()] + normalized[match.end() :]
-        if any(keyword in remaining for keyword in ("本周", "上周", "本月", "上月", "当前报告", "上一期")):
-            raise ValueError("不支持同时包含多个周期意图的比较请求")
-        period = _resolve_rolling_days(today, int(match.group(1)))
+    elif rolling_match:
+        period = _resolve_rolling_days(today, int(rolling_match.group(1)))
     else:
-        months = _EXPLICIT_MONTH_PATTERN.findall(normalized)
-        if len(months) == 2 and any(word in normalized for word in ("比较", "对比", "和", "与")):
-            period = _resolve_explicit_months(months)
+        if len(explicit_months) == 2 and any(word in normalized for word in ("比较", "对比", "和", "与")):
+            period = _resolve_explicit_months(explicit_months)
         else:
             raise ValueError("不支持的比较周期表达，请明确使用自然周、月份或最近 7/30 天")
 

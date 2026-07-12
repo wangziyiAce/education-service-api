@@ -95,3 +95,18 @@ def test_rolling_period_with_extra_period_intent_is_rejected() -> None:
     """匹配滚动窗口后仍有额外周期意图时必须拒绝，不能静默忽略歧义文本。"""
     with pytest.raises(ValueError, match="不支持"):
         resolve_comparison_period("最近7天和前7天再加本周", now=NOW)
+
+
+@pytest.mark.parametrize(
+    ("message", "current_report_period"),
+    [
+        ("本周和上周以及本月和上月", None),
+        ("当前报告和上一期以及本月和上月", (date(2026, 7, 8), date(2026, 7, 14))),
+    ],
+)
+def test_multiple_supported_period_families_are_rejected(
+    message: str, current_report_period: tuple[date, date] | None
+) -> None:
+    """任意两个已支持周期族同时出现时都必须失败关闭，不能由分支顺序决定结果。"""
+    with pytest.raises(ValueError, match="多个周期意图"):
+        resolve_comparison_period(message, now=NOW, current_report_period=current_report_period)
