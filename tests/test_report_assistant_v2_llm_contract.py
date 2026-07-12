@@ -33,6 +33,55 @@ from services.reporting.orchestrator import ReportTaskCreationResult
 
 
 class TestLLMValidStructuredOutput:
+    def test_nullable_optional_fields_use_schema_defaults(self):
+        """模型常把可选数组和枚举返回为 null，解析器应恢复默认值而非整轮降级。"""
+        from services.reporting.assistant.intent_parser import _extract_plan_from_llm_response
+
+        plan = _extract_plan_from_llm_response(json.dumps({
+            "intent": "drill_down",
+            "confidence": 0.9,
+            "focus_metrics": None,
+            "output_style": None,
+        }))
+
+        assert plan.intent == ReportAssistantIntent.DRILL_DOWN
+        assert plan.focus_metrics == []
+        assert plan.output_style == "management_summary"
+
+    def test_multiturn_llm_plan_inherits_report_id_from_context(self, monkeypatch):
+        """追问已识别但模型未重复报告 ID 时，应沿用会话中的上一份报告。"""
+        from services.reporting.assistant.config import ReportAssistantSettings
+        from services.reporting.assistant.intent_parser import ReportIntentParser
+
+        _patch_assistant_settings(
+            monkeypatch,
+            ReportAssistantSettings(enabled=True, llm_enabled=True),
+        )
+        parser = ReportIntentParser()
+        monkeypatch.setattr(
+            parser,
+            "_parse_with_llm",
+            lambda *args, **kwargs: ReportRequestPlan(
+                intent=ReportAssistantIntent.DRILL_DOWN,
+                confidence=0.9,
+            ),
+        )
+
+        plan = parser.parse(
+            message="最严重的是哪几个？",
+            allowed_report_types=[],
+            context=ReportConversationContext(
+                conversation_id="inherit-report",
+                last_report_id=7,
+                last_report_type="application_risk",
+            ),
+        )
+
+        assert plan.report_id == 7
+        assert plan.report_type == "application_risk"
+        assert plan.confidence >= 0.8
+        assert plan.requires_clarification is False
+
     """模型返回合法 JSON 时，能通过 Pydantic 并进入报告工具。"""
 
     def test_valid_structured_output_parsed_correctly(self, monkeypatch):

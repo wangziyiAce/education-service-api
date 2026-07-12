@@ -22,10 +22,8 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { X, Bot, Sparkles, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { toast } from 'sonner'
 import { sendReportAssistantMessage } from '@/api/report-assistant'
 import ReportAssistantMessage from './ReportAssistantMessage'
 import ReportAssistantComposer from './ReportAssistantComposer'
@@ -116,16 +114,12 @@ interface Props {
 // ============================================================
 
 export default function ReportAssistantPanel({ open, onClose, initialReportId, initialReportType }: Props) {
-  const navigate = useNavigate()
-
   // 消息列表
   const [messages, setMessages] = useState<AssistantMessage[]>([])
   // 会话上下文（每次响应后更新）
   const [context, setContext] = useState<ReportConversationContext>(
     createEmptyContext(initialReportId, initialReportType)
   )
-  // 当前请求幂等键
-  const [clientRequestId, setClientRequestId] = useState<string | null>(null)
   // 是否正在等待响应
   const [isSending, setIsSending] = useState(false)
   // 功能是否关闭（503）
@@ -198,7 +192,6 @@ export default function ReportAssistantPanel({ open, onClose, initialReportId, i
           client_request_id: generateClientRequestId(),
         }
     const requestId = requestSnapshot.client_request_id as string
-    setClientRequestId(requestId)
 
     // 添加用户消息
     const userMsg: AssistantMessage = {
@@ -297,7 +290,6 @@ export default function ReportAssistantPanel({ open, onClose, initialReportId, i
       })
     } finally {
       setIsSending(false)
-      setClientRequestId(null)
     }
   }, [context, isSending, isDisabled, addMessage, updateLastAssistantMessage])
 
@@ -319,11 +311,6 @@ export default function ReportAssistantPanel({ open, onClose, initialReportId, i
       handleSend(lastUserMsg.content, lastUserMsg.originalRequest)
     }
   }, [messages, handleSend, isSending])
-
-  /** 跳转报告详情 */
-  const handleNavigateToReport = useCallback((reportId: number) => {
-    navigate(`/reports/${reportId}`)
-  }, [navigate])
 
   if (!open) return null
 

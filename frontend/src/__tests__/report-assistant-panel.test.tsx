@@ -179,19 +179,6 @@ function makeExplainRiskResponse(reportId = 128): ReportAssistantMessageResponse
   })
 }
 
-/** 创建 permission_denied 响应 */
-function makePermissionDeniedResponse(): ReportAssistantMessageResponse {
-  return makeResponse({
-    status: 'permission_denied',
-    intent: 'unknown',
-    answer: '权限不足',
-    conversation_context: {
-      conversation_id: 'conv-001',
-      referenced_entities: [],
-    },
-  })
-}
-
 // ============================================================
 //  辅助函数
 // ============================================================

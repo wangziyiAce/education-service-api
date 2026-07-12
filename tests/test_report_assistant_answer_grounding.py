@@ -626,3 +626,12 @@ class TestMetricTraceEvidenceIds:
 
         assert is_valid is False
         assert errors
+def test_markdown_list_numbers_are_not_business_hallucinations():
+    """Markdown 列表序号只是排版，不应触发业务数字防幻觉降级。"""
+    from services.reporting.assistant.answer_composer import _is_likely_identifier
+
+    answer = "1. 风险原因\n2. 建议动作\n3、继续跟进"
+
+    assert _is_likely_identifier(1.0, answer) is True
+    assert _is_likely_identifier(2.0, answer) is True
+    assert _is_likely_identifier(3.0, answer) is True

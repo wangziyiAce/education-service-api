@@ -145,14 +145,20 @@ def _compose_with_llm(
         from services.reporting.llm_client import ReportLLMClient
 
         system_prompt = _build_answer_system_prompt(intent, tool_data_list, evidence_map)
-        user_prompt = "请根据上述数据生成用户友好的中文回答。记住：所有业务数字必须使用 {{E1}} {{E2}} 格式的占位符。"
+        available_ids = " ".join(f"{{{{{eid}}}}}" for eid in evidence_map)
+        user_prompt = (
+            "请根据上述数据生成用户友好的中文回答。所有业务数字必须使用证据占位符；"
+            f"本轮只允许使用这些占位符：{available_ids or '无'}。"
+        )
 
         client = ReportLLMClient()
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        response = client.chat_completion(messages, temperature=0.3, max_tokens=600)
+        response = client.chat_completion(
+            messages, temperature=0.3, max_tokens=600, json_mode=False
+        )
 
         if response.status != "success" or not response.content:
             logger.warning("LLM 回答生成失败，降级到确定性模板")
@@ -190,7 +196,9 @@ def _compose_with_llm(
                 {"role": "assistant", "content": raw_answer},
                 {"role": "user", "content": repair_prompt},
             ]
-            repair_response = client.chat_completion(repair_messages, temperature=0.1, max_tokens=600)
+            repair_response = client.chat_completion(
+                repair_messages, temperature=0.1, max_tokens=600, json_mode=False
+            )
 
             if repair_response.status == "success" and repair_response.content:
                 raw_answer = repair_response.content.strip()
@@ -227,7 +235,9 @@ def _compose_with_llm(
                 {"role": "assistant", "content": raw_answer},
                 {"role": "user", "content": repair_prompt},
             ]
-            repair_response = client.chat_completion(repair_messages, temperature=0.1, max_tokens=600)
+            repair_response = client.chat_completion(
+                repair_messages, temperature=0.1, max_tokens=600, json_mode=False
+            )
 
             if repair_response.status == "success" and repair_response.content:
                 raw_answer = repair_response.content.strip()
@@ -329,6 +339,12 @@ def _check_naked_business_numbers(
 
 def _is_likely_identifier(num: float, answer: str) -> bool:
     """判断数字是否更可能是标识符而非业务数字。"""
+    # Markdown/中文列表序号只承担排版作用，不是工具返回的业务量。若不排除，
+    # 模型生成的“1. 原因、2. 建议”会被数字兜底误判为幻觉并强制降级。
+    if num == int(num) and re.search(
+        rf"(?m)^\s*{int(num)}\s*[.、)]\s*\S", answer
+    ):
+        return True
     # 整数且 >= 1000 → 可能是 ID
     if num == int(num) and num >= 1000:
         return True
@@ -354,6 +370,7 @@ def _build_answer_system_prompt(
         )
 
     evidence_text = "\n".join(evidence_lines) if evidence_lines else "（无额外数据）"
+    allowed_placeholders = "、".join(f"{{{{{eid}}}}}" for eid in evidence_map) or "无"
 
     # 工具数据摘要
     data_summary = _summarize_tool_data(tool_data_list)
@@ -361,7 +378,8 @@ def _build_answer_system_prompt(
     return (
         "你是海外留学教育服务平台的智能报告助手。\n\n"
         "**回答规则（必须严格遵守）：**\n"
-        "1. 所有业务数字（风险分、数量、金额、百分比等）必须使用 {{E1}} {{E2}} 占位符引用，禁止直接写出数字。\n"
+        "1. 所有业务数字（风险分、数量、金额、百分比等）必须使用证据占位符引用，禁止直接写出数字。\n"
+        f"   本轮唯一允许的占位符是：{allowed_placeholders}；禁止引用未列出的 E 编号。\n"
         "2. 每个占位符有固定的含义（如 E1=申请 A1024 风险分=90），不能交换使用。\n"
         "3. 工具数据中的文字结论可以引用，但不能编造数据中不存在的风险原因。\n"
         "4. 行动建议必须标明是\"建议\"，不能表述为确定性事实。\n"

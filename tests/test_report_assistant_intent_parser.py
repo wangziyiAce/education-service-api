@@ -167,6 +167,18 @@ class TestKeywordFallbackRejection:
 
 
 class TestPermissionFiltering:
+    def test_employee_forbidden_report_is_identified_for_explicit_denial(self):
+        """无权限类型仍需被识别，Service 才能返回 403，而不是伪装成 unknown。"""
+        parser = ReportIntentParser()
+        plan = parser._parse_with_keywords(
+            message="哪个渠道 ROI 最差？",
+            allowed_report_types=_catalog("employee"),
+            context=_ctx(),
+        )
+
+        assert plan.intent == ReportAssistantIntent.GENERATE_REPORT
+        assert plan.report_type == "channel_roi"
+
     def test_employee_cannot_access_channel_roi(self):
         """普通员工不能访问 channel_roi（仅 admin/manager）。"""
         catalog = _catalog("employee")

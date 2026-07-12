@@ -164,6 +164,18 @@ class ReportAssistantService:
         )
 
         if clarification.needs_clarification and not clarification.can_proceed:
+            # 报告类型已识别但不在角色白名单时必须明确拒绝。不能把越权请求包装成
+            # 普通澄清响应，否则 HTTP 层会返回 200，前端也无法执行安全隐藏策略。
+            if plan.report_type and plan.report_type not in allowed_types:
+                return self._build_response(
+                    status="permission_denied",
+                    intent=plan.intent,
+                    answer="当前账号没有权限访问该类型的报告。",
+                    needs_clarification=False,
+                    confidence=0.0,
+                    context=context,
+                    error_code="PERMISSION_DENIED",
+                )
             return self._build_response(
                 status="needs_clarification",
                 intent=plan.intent,

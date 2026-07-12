@@ -10,6 +10,10 @@ import importlib
 import sys
 import subprocess
 from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+from fastapi import HTTPException
 
 
 def _load_config_with_env(monkeypatch, **values):
@@ -169,3 +173,37 @@ def test_router_registry_mounts_confirmed_modules_without_duplicate_operations()
         "/api/v1/student/feedback-tickets/{ticket_id}",
     }.issubset(paths)
     assert len(operations) == len(set(operations))
+
+
+def test_report_action_update_rejects_orphan_action_without_committing():
+    """行动项关联报告缺失时必须 fail-closed，不能跳过行级鉴权继续写库。"""
+
+    from routers.report import update_report_action
+    from schemas.report import ReportActionUpdate
+    from utils.auth import CurrentUser
+
+    orphan_action = SimpleNamespace(id=9, report_id=999999)
+    db = MagicMock()
+    action_query = MagicMock()
+    report_query = MagicMock()
+    db.query.side_effect = [action_query, report_query]
+    action_query.filter_by.return_value.first.return_value = orphan_action
+    report_query.filter_by.return_value.first.return_value = None
+
+    with pytest.raises(HTTPException) as exc_info:
+        update_report_action(
+            action_id=9,
+            request=ReportActionUpdate(status="completed"),
+            db=db,
+            current_user=CurrentUser(
+                id=2,
+                username="employee",
+                real_name="员工",
+                user_type="employee",
+                role_code="employee",
+                department="顾问部",
+            ),
+        )
+
+    assert exc_info.value.status_code == 404
+    db.commit.assert_not_called()

@@ -87,7 +87,25 @@ class ReportIntentParser:
         # 1) 尝试 LLM 模式
         if settings.llm_enabled and settings.enabled:
             try:
-                return self._parse_with_llm(message, allowed_report_types, context)
+                plan = self._parse_with_llm(message, allowed_report_types, context)
+                # 多轮追问通常不会在自然语言中重复报告 ID。模型只负责识别意图，
+                # Python 再从可信会话上下文补齐关联对象，避免正确追问被误判为缺参数。
+                multi_turn_intents = {
+                    ReportAssistantIntent.DRILL_DOWN,
+                    ReportAssistantIntent.EXPLAIN_RISK,
+                    ReportAssistantIntent.EXPLAIN_METRIC,
+                    ReportAssistantIntent.QUERY_DATA_QUALITY,
+                    ReportAssistantIntent.QUERY_REPORT_STATUS,
+                }
+                if plan.intent in multi_turn_intents:
+                    plan.report_id = plan.report_id or context.last_report_id
+                    plan.report_type = plan.report_type or context.last_report_type
+                    if plan.report_id is not None:
+                        # 这些意图都是只读操作，且报告对象已由服务端上下文确定。模型对
+                        # 置信度的主观低估不应阻断明确追问，因此提升到安全执行阈值。
+                        plan.confidence = max(plan.confidence, settings.confidence_high)
+                        plan.requires_clarification = False
+                return plan
             except Exception as exc:
                 logger.warning("LLM 意图解析失败，降级到关键词路由: %s", exc)
 
@@ -193,8 +211,9 @@ class ReportIntentParser:
         scored: list[tuple[str, int]] = []
 
         for option in allowed_report_types:
-            if not option.allowed:
-                continue
+            # 无权限类型也要完成“类型识别”，随后由 Python 权限层明确返回 403。
+            # 如果在解析阶段直接跳过，限制报告会伪装成 unknown/200，既不利于前端
+            # 区分权限问题，也无法审计越权请求。这里只识别，不调用任何业务工具。
             keywords = option.keywords
             score = sum(1 for kw in keywords if kw.lower() in message_lower)
             if score > 0:
@@ -366,6 +385,13 @@ def _extract_plan_from_llm_response(content: str) -> ReportRequestPlan:
         "clarification_question", "assumptions", "confidence",
     }
     safe_raw = {k: v for k, v in raw.items() if k in allowed_fields}
+
+    # 部分模型会把未命中的可选字段统一输出为 null。Pydantic 对真正 Optional 字段可直接
+    # 接受，但 list/default enum 需要删除 null 才能启用 Schema 默认值，否则一次可用的
+    # 意图识别会被整体判为失败并退回关键词路由。
+    for field_name in ("focus_metrics", "output_style", "assumptions"):
+        if safe_raw.get(field_name) is None:
+            safe_raw.pop(field_name, None)
 
     # 确保 intent 是合法值
     intent_raw = safe_raw.get("intent", "unknown")

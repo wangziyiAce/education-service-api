@@ -141,7 +141,7 @@ class TestServiceSuccessPath:
 
 class TestServicePermissionDenied:
     def test_employee_cannot_access_channel_roi(self, monkeypatch):
-        """普通员工访问 channel_roi → 被拒绝或澄清。"""
+        """普通员工访问 channel_roi → 明确拒绝，HTTP 层据此返回 403。"""
         _patch_assistant_settings(monkeypatch)
 
         service = ReportAssistantService()
@@ -157,4 +157,6 @@ class TestServicePermissionDenied:
         # 关键词匹配可能命中 channel_roi，但 catalog 中 allowed=False
         # 如果匹配到了 → clarification 发现不在 allowed_types → 拒绝
         # 如果没匹配到 → UNKNOWN → 澄清
-        assert response.status in ("needs_clarification", "error")
+        assert response.status == "permission_denied"
+        assert response.evidence == []
+        assert response.report_type is None

@@ -9,7 +9,7 @@
  * 5. 建议追问使用最新上下文
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
@@ -18,7 +18,7 @@ import ReportAssistantEvidence from '@/components/report-assistant/ReportAssista
 import ReportAssistantDataQuality from '@/components/report-assistant/ReportAssistantDataQuality'
 import ReportAssistantSuggestions from '@/components/report-assistant/ReportAssistantSuggestions'
 import ReportAssistantComposer from '@/components/report-assistant/ReportAssistantComposer'
-import type { AssistantMessage, EvidenceItem, AssistantDataQuality } from '@/types/report-assistant'
+import type { AssistantMessage, EvidenceItem } from '@/types/report-assistant'
 
 /** 创建测试用 AssistantMessage */
 function makeMsg(overrides: Partial<AssistantMessage> = {}): AssistantMessage {
