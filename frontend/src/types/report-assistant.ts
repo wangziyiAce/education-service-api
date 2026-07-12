@@ -23,6 +23,7 @@ export type ReportAssistantIntent =
   | 'explain_metric'
   | 'query_data_quality'
   | 'compare_reports'
+  | 'cross_report_analysis'
   | 'summarize_for_role'
   | 'generate_action_candidates'
   | 'confirm_actions'
@@ -209,4 +210,83 @@ export interface AssistantMessage {
   clientRequestId?: string
   /** 发送时的完整请求快照；重试不能改用后续轮次已经变化的会话上下文。 */
   originalRequest?: ReportAssistantMessageRequest
+  /** Iteration 3：指标比较列表 */
+  comparison?: MetricComparison[]
+  /** Iteration 3：比较周期 */
+  comparison_period?: ComparisonPeriod | null
+  /** Iteration 3：双周期数据质量 */
+  comparison_data_quality?: ComparisonDataQuality | null
+  /** Iteration 3：四区关系分析 */
+  relationship_sections?: RelationshipSections | null
+}
+
+// ============================================================
+//  Iteration 3 — 比较与跨报告分析类型
+// ============================================================
+
+/** 比较周期 — 对齐后端 ComparisonPeriod */
+export interface ComparisonPeriod {
+  current_start: string
+  current_end: string
+  previous_start: string
+  previous_end: string
+  current_label: string
+  previous_label: string
+  assumptions: string[]
+}
+
+/** 指标比较 — 对齐后端 MetricComparison */
+export interface MetricComparison {
+  report_type: string
+  metric_name: string
+  label: string
+  dimension?: Record<string, string>
+  current_value: number | null
+  previous_value: number | null
+  delta: number | null
+  change_rate: number | null
+  direction: 'up' | 'down' | 'flat' | 'unknown'
+  unit?: string | null
+  current_evidence_id: string
+  previous_evidence_id: string
+}
+
+/** 双周期数据质量 — 对齐后端 ComparisonDataQuality */
+export interface ComparisonDataQuality {
+  current: Record<string, unknown>
+  previous: Record<string, unknown>
+  allow_values: boolean
+  allow_trend: boolean
+  warnings: string[]
+}
+
+/** 四区关系分析 — 对齐后端 RelationshipSections */
+export interface RelationshipSections {
+  confirmed_facts: string[]
+  related_signals: string[]
+  possible_explanations: string[]
+  cannot_confirm: string[]
+}
+
+/** EvidenceItem 扩展字段（Iteration 3） */
+export interface EvidenceItem {
+  /** 周期标签，如"本周""上周" */
+  period_label?: string | null
+  /** 比较角色：current/previous/delta/change_rate */
+  comparison_role?: 'current' | 'previous' | 'delta' | 'change_rate' | null
+  /** 报告类型 */
+  report_type?: string | null
+}
+
+/** 扩展 ReportAssistantMessageResponse 以包含 Iteration 3 字段 */
+export interface ReportAssistantMessageResponseIter3
+  extends ReportAssistantMessageResponse {
+  /** 指标比较列表 */
+  comparison?: MetricComparison[]
+  /** 比较周期信息 */
+  comparison_period?: ComparisonPeriod | null
+  /** 双周期数据质量 */
+  comparison_data_quality?: ComparisonDataQuality | null
+  /** 四区关系分析 */
+  relationship_sections?: RelationshipSections | null
 }

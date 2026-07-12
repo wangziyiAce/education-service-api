@@ -20,6 +20,8 @@ import { Button } from '@/components/ui/button'
 import ReportAssistantDataQuality from './ReportAssistantDataQuality'
 import ReportAssistantEvidence from './ReportAssistantEvidence'
 import ReportAssistantSuggestions from './ReportAssistantSuggestions'
+import ReportAssistantComparison from './ReportAssistantComparison'
+import ReportAssistantRelationship from './ReportAssistantRelationship'
 import type { AssistantMessage } from '@/types/report-assistant'
 
 interface Props {
@@ -171,6 +173,22 @@ export default function ReportAssistantMessage({ message, onFollowUp, isSending 
         {/* assistant 消息的附加内容（只在 completed 状态展示） */}
         {isAssistant && message.status === 'completed' && (
           <>
+            {/* Iteration 3：比较表格（permission_denied 时隐藏） */}
+            {'comparison' in message && (message as any).comparison && (
+              <ReportAssistantComparison
+                items={(message as any).comparison}
+                currentLabel={(message as any).comparison_period?.current_label}
+                previousLabel={(message as any).comparison_period?.previous_label}
+              />
+            )}
+
+            {/* Iteration 3：关系分析区块（permission_denied 时隐藏） */}
+            {'relationship_sections' in message && (message as any).relationship_sections && (
+              <ReportAssistantRelationship
+                sections={(message as any).relationship_sections}
+              />
+            )}
+
             {/* 数据质量提示 */}
             <ReportAssistantDataQuality dataQuality={message.dataQuality} />
 
