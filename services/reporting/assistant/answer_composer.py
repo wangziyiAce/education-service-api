@@ -614,6 +614,369 @@ def _build_evidence_list(
     return evidence
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 跨报告关系回答编排（Iteration 3 — Task 7）
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def compose_relationship_answer(
+    *,
+    tool_results: list[Any],
+    llm_enabled: bool = False,
+) -> dict[str, Any]:
+    """为跨报告分析生成四区结构化回答。
+
+    回答分为四个区块（RelationshipSections）：
+    - confirmed_facts：来自 Evidence 的确定性数值，不由 LLM 生成
+    - related_signals：同一时间段内同时变化的指标信号
+    - possible_explanations：可能解释，必须包含不确定性措辞
+    - cannot_confirm：无法确认的事项——Python 强制插入，LLM 无法删除
+
+    因果控制：
+    - 禁止使用"导致""证明""必然""根本原因是""就是因为"等因果断言词
+    - LLM 输出中包含禁止词的语句被移入 ``cannot_confirm`` 区块
+    - 确定性模板自带不确定性措辞和无法确认说明
+
+    Args:
+        tool_results: 跨报告比较工具结果列表（包含 comparison、evidence、DataQuality）。
+        llm_enabled: 是否启用 LLM 生成关系分析文本。
+
+    Returns:
+        dict 包含 answer（自然语言回答）、evidence（证据列表）、
+        relationship_sections（四区结构化分析）。
+    """
+    # 提取工具数据及证据
+    evidence_list: list[dict[str, Any]] = []
+    comparison_items: list[dict[str, Any]] = []
+
+    for result in tool_results:
+        data = getattr(result, "data", result) if not isinstance(result, dict) else result
+        if isinstance(data, dict):
+            evidence_list.extend(data.get("evidence", []))
+            comparison_items.extend(data.get("comparison", []))
+
+    # ── 从证据确定性生成已确认事实 ──
+    confirmed_facts = _build_confirmed_facts(comparison_items, evidence_list)
+
+    if llm_enabled:
+        try:
+            from services.reporting.llm_client import ReportLLMClient
+
+            system_prompt = _build_relationship_system_prompt(comparison_items, evidence_list)
+            user_prompt = (
+                "请根据上述跨报告比较数据，生成相关信号和可能解释两个区块的中文分析。"
+                "相关信号：哪些指标在同一周期内同时变化（不声称因果）。"
+                "可能解释：这些变化可能的业务含义（必须使用不确定措辞）。"
+                '不要使用"导致""证明""必然""根本原因是""就是因为"等词。'
+            )
+
+            client = ReportLLMClient()
+            response = client.chat_completion(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.3, max_tokens=500, json_mode=False,
+            )
+
+            if response.status == "success" and response.content:
+                raw_answer = response.content.strip()
+                related_signals, possible_explanations = _parse_llm_sections(raw_answer)
+            else:
+                logger.warning("LLM 关系分析失败，降级到确定性模板")
+                raw_answer = ""
+                related_signals, possible_explanations = [], []
+
+        except Exception as exc:
+            logger.warning("LLM 关系分析异常: %s，降级到确定性模板", exc)
+            raw_answer = ""
+            related_signals, possible_explanations = [], []
+    else:
+        raw_answer = ""
+        related_signals, possible_explanations = [], []
+
+    # ── 确定性模板补齐：LLM 为空时必须用模板填充 ──
+    if not related_signals:
+        related_signals = _build_template_related_signals(comparison_items)
+    if not possible_explanations:
+        possible_explanations = _build_template_possible_explanations(comparison_items)
+
+    # ── 因果语言校验与清理 ──
+    from services.reporting.assistant.guardrails import (
+        FORBIDDEN_CAUSAL_PATTERNS,
+        validate_causal_language,
+    )
+
+    cannot_confirm: list[str] = []
+
+    # 扫描 LLM 输出的相关信号和可能解释
+    for section_items, section_name in [
+        (related_signals, "相关信号"),
+        (possible_explanations, "可能解释"),
+    ]:
+        cleaned: list[str] = []
+        for item in section_items:
+            violations = validate_causal_language(item)
+            if violations:
+                # 将原句移入无法确认区块，并说明原因
+                terms_text = '、'.join(violations)
+                cannot_confirm.append(
+                    f"原{section_name}声明“{item}”"
+                    f"使用了禁止的因果断言词（{terms_text}），不能作为确定性结论。"
+                )
+                # 尝试去除禁止词保留信号
+                sanitized = item
+                for term in violations:
+                    sanitized = sanitized.replace(term, "与…相关")
+                if sanitized != item:
+                    cleaned.append(sanitized)
+            else:
+                cleaned.append(item)
+
+        if section_name == "相关信号":
+            related_signals = cleaned
+        else:
+            possible_explanations = cleaned
+
+    # ── Python 强制插入无法确认说明 ──
+    cannot_confirm.append(
+        "跨报告分析只能识别同一周期内指标的共同变化，不能证明一个指标的变化"
+        "导致了另一个指标的变化。以上相关信号和可能解释仅供业务参考，"
+        "不应作为因果关系的确定性证据。"
+    )
+
+    # ── 构建自然语言回答 ──
+    answer_parts: list[str] = []
+
+    if confirmed_facts:
+        answer_parts.append("📊 **已确认事实**")
+        for fact in confirmed_facts:
+            answer_parts.append(f"- {fact}")
+
+    if related_signals:
+        answer_parts.append("")
+        answer_parts.append("📡 **相关信号**")
+        for signal in related_signals:
+            answer_parts.append(f"- {signal}")
+
+    if possible_explanations:
+        answer_parts.append("")
+        answer_parts.append("💡 **可能解释**")
+        for exp in possible_explanations:
+            answer_parts.append(f"- {exp}")
+
+    if cannot_confirm:
+        answer_parts.append("")
+        answer_parts.append("⚠️ **无法确认**")
+        for item in cannot_confirm:
+            answer_parts.append(f"- {item}")
+
+    answer = "\n".join(answer_parts)
+
+    relationship_sections = {
+        "confirmed_facts": confirmed_facts,
+        "related_signals": related_signals,
+        "possible_explanations": possible_explanations,
+        "cannot_confirm": cannot_confirm,
+    }
+
+    return {
+        "answer": answer,
+        "evidence": evidence_list,
+        "relationship_sections": relationship_sections,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 四区回答内部辅助
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _build_confirmed_facts(
+    comparison_items: list[dict[str, Any]],
+    evidence_list: list[dict[str, Any]],
+) -> list[str]:
+    """从比较数据和证据中确定性提取已确认事实。
+
+    已确认事实只包含可直接从数据中计算出的陈述，不包含推理或因果。
+    """
+    facts: list[str] = []
+    for comp in comparison_items:
+        label = comp.get("label", comp.get("metric_name", "指标"))
+        unit = comp.get("unit", "")
+        current = comp.get("current_value")
+        previous = comp.get("previous_value")
+        delta = comp.get("delta")
+        direction = comp.get("direction", "unknown")
+        dimension = comp.get("dimension", {})
+
+        dim_str = f"（{'、'.join(f'{k}={v}' for k, v in dimension.items())}）" if dimension else ""
+
+        fact_parts = [f"{label}{dim_str}："]
+        if current is not None:
+            fact_parts.append(f"当前周期为 {current}{unit}")
+        if previous is not None:
+            fact_parts.append(f"，上一周期为 {previous}{unit}")
+        if delta is not None and direction != "unknown":
+            direction_text = {"up": "上升", "down": "下降", "flat": "持平"}.get(direction, "变化")
+            fact_parts.append(f"，{direction_text}了 {abs(delta)}{unit}")
+        elif delta is not None:
+            fact_parts.append(f"，变化量为 {delta}{unit}")
+
+        facts.append("".join(fact_parts))
+
+    # 如果比较数据中没有维度信息，补充证据层面的摘要
+    if not facts and evidence_list:
+        current_ev = [e for e in evidence_list if e.get("comparison_role") == "current"]
+        previous_ev = [e for e in evidence_list if e.get("comparison_role") == "previous"]
+        if current_ev:
+            cur_val = current_ev[0]
+            facts.append(
+                f"{cur_val.get('label', '当前周期')}为 {cur_val.get('value')}{cur_val.get('unit', '')}"
+            )
+        if previous_ev:
+            prev_val = previous_ev[0]
+            facts.append(
+                f"{prev_val.get('label', '上一周期')}为 {prev_val.get('value')}{prev_val.get('unit', '')}"
+            )
+
+    if not facts:
+        facts.append("当前没有足够数据生成已确认事实。")
+
+    return facts
+
+
+def _build_template_related_signals(
+    comparison_items: list[dict[str, Any]],
+) -> list[str]:
+    """从比较数据生成确定性相关信号（LLM 不可用时的模板）。"""
+    signals: list[str] = []
+    for comp in comparison_items:
+        label = comp.get("label", comp.get("metric_name", "指标"))
+        direction = comp.get("direction", "unknown")
+        unit = comp.get("unit", "")
+        delta = comp.get("delta")
+
+        if direction == "up" and delta is not None:
+            signals.append(f"{label}在本周期上升了 {abs(delta)}{unit}，建议关注是否与其他指标变化同步。")
+        elif direction == "down" and delta is not None:
+            signals.append(f"{label}在本周期下降了 {abs(delta)}{unit}，可结合其他报表分析原因。")
+        elif direction == "flat":
+            signals.append(f"{label}在本周期与上一周期基本持平，未见显著变化。")
+        else:
+            signals.append(f"{label}的变化方向不确定，可能因数据质量限制无法判定趋势。")
+
+    if not signals:
+        signals.append("当前比较数据不足以生成明确的相关信号。")
+
+    return signals
+
+
+def _build_template_possible_explanations(
+    comparison_items: list[dict[str, Any]],
+) -> list[str]:
+    """从比较数据生成含不确定性措辞的可能解释（LLM 不可用时的模板）。"""
+    explanations: list[str] = []
+    for comp in comparison_items:
+        label = comp.get("label", comp.get("metric_name", "指标"))
+        dimension = comp.get("dimension", {})
+        dim_str = f"（{'、'.join(f'{k}={v}' for k, v in dimension.items())}）" if dimension else ""
+        explanations.append(
+            f"{label}{dim_str}的变化可能与业务周期、资源分配或外部因素有关，"
+            "有待结合更多数据进一步确认。"
+        )
+
+    if not explanations:
+        explanations.append("可能受多种因素影响，有待获取更多周期数据后进一步分析。")
+
+    # 每个解释必须包含不确定性措辞
+    validated: list[str] = []
+    for exp in explanations:
+        has_uncertainty = any(
+            word in exp for word in ("可能", "或许", "有待", "不一定", "不能排除", "建议关注")
+        )
+        if not has_uncertainty:
+            exp = f"可能{exp}"
+        validated.append(exp)
+
+    return validated
+
+
+def _build_relationship_system_prompt(
+    comparison_items: list[dict[str, Any]],
+    evidence_list: list[dict[str, Any]],
+) -> str:
+    """构建跨报告关系分析的 LLM System Prompt。"""
+    comp_summary = "\n".join(
+        f"- {c.get('label', c.get('metric_name', '?'))}: "
+        f"当前={c.get('current_value', '?')}{c.get('unit', '')}, "
+        f"上期={c.get('previous_value', '?')}{c.get('unit', '')}, "
+        f"变化={c.get('delta', '?')}{c.get('unit', '')}, "
+        f"方向={c.get('direction', '?')}"
+        for c in comparison_items
+    )
+
+    return (
+        '你是海外留学教育服务平台的智能报告助手，负责跨报告关系分析。\n\n'
+        '**回答规则（必须严格遵守）：**\n'
+        '1. 已确认事实由 Python 从证据中提取，你不需要重复生成。\n'
+        '2. 你只需生成[相关信号]和[可能解释]两个区块。\n'
+        '3. 相关信号：描述哪些指标在同一周期内同步变化（不声称因果）。\n'
+        '4. 可能解释：推测变化的可能业务含义，必须使用[可能][或许][有待确认]等不确定措辞。\n'
+        '5. 严禁使用以下词：导致、证明、必然、根本原因是、就是因为。\n'
+        '6. 不要在回答中直接输出数字，使用定性描述即可。\n'
+        '7. 回答使用中文，简洁、结构清晰。\n\n'
+        f'**比较数据摘要**:\n{comp_summary}\n'
+    )
+
+
+def _parse_llm_sections(raw_answer: str) -> tuple[list[str], list[str]]:
+    """解析 LLM 输出中的相关信号和可能解释区块。
+
+    按段落级标记开拆分；如果 LLM 未按格式输出，则将全文按句号拆分后
+    分配到相关信号落入，可能解释留空由模板补齐。
+    """
+    related_signals: list[str] = []
+    possible_explanations: list[str] = []
+
+    # 尝试按常见标记拆分
+    import re
+    # 匹配"相关信号"或"可能解释"标记后的内容
+    patterns = [
+        (r'相关信号[：:]\s*', 'signals'),
+        (r'可能解释[：:]\s*', 'explanations'),
+    ]
+
+    # 简单策略：按段落拆分
+    paragraphs = [p.strip() for p in raw_answer.split("\n\n") if p.strip()]
+    if not paragraphs:
+        paragraphs = [p.strip() for p in raw_answer.split("\n") if p.strip()]
+
+    current_section = 'signals'  # 默认归入相关信号
+    for para in paragraphs:
+        lower = para.lower()
+        if '相关信号' in lower or '关联信号' in lower or '同步信号' in lower:
+            current_section = 'signals'
+            # 提取标记后的内容
+            cleaned = re.sub(r'^[#\-\*\s]*相关信号[：:]*\s*', '', para, flags=re.IGNORECASE)
+            if cleaned:
+                related_signals.append(cleaned)
+            continue
+        elif '可能解释' in lower or '可能原因' in lower or '分析解释' in lower:
+            current_section = 'explanations'
+            cleaned = re.sub(r'^[#\-\*\s]*可能解释[：:]*\s*', '', para, flags=re.IGNORECASE)
+            if cleaned:
+                possible_explanations.append(cleaned)
+            continue
+        else:
+            if current_section == 'signals':
+                related_signals.append(para)
+            else:
+                possible_explanations.append(para)
+
+    return related_signals, possible_explanations
+
+
 def _generate_follow_ups(intent: str, tool_data_list: list[Any]) -> list[str]:
     """根据意图和数据生成建议追问。"""
     data = tool_data_list[0] if tool_data_list else {}

@@ -587,3 +587,37 @@ def validate_comparison_access(current_user: Any, definition: Any, metrics: list
         raise PermissionError("无权访问该报告类型")
     if any(item.sensitive for item in metrics) and role not in ("admin", "manager", "team_leader"):
         raise PermissionError("无权访问敏感对比指标")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 因果语言保护（Iteration 3 — Task 7）
+# ══════════════════════════════════════════════════════════════════════════════
+
+# 禁止的因果断言词：跨报告分析只能报告共现信号，不能声称因果关系。
+# 该元组在模块导入后不可变，LLM 和调用方均无法在运行时修改。
+FORBIDDEN_CAUSAL_PATTERNS: tuple[str, ...] = (
+    "导致",
+    "证明",
+    "必然",
+    "根本原因是",
+    "就是因为",
+)
+
+
+def validate_causal_language(answer: str) -> list[str]:
+    """扫描回答文本，返回其中出现的所有禁止因果词。
+
+    跨报告分析只能报告共现信号和可能的解释，禁止使用因果断言词。
+    调用方应把包含禁止词的语句移入 ``cannot_confirm`` 区块，并去掉原句中的禁止词。
+
+    Args:
+        answer: LLM 生成或模板产生的回答文本。
+
+    Returns:
+        在文本中检测到的禁止因果词列表（去重保持原始出现顺序）。
+    """
+    found: list[str] = []
+    for term in FORBIDDEN_CAUSAL_PATTERNS:
+        if term in answer:
+            found.append(term)
+    return found
