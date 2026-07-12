@@ -292,7 +292,8 @@ def call_llm_direct(
     logger.info(f"LLM直调: model={resolved_model}, prompt_len={len(system_prompt)}")
 
     try:
-        with httpx.Client(timeout=LLM_TIMEOUT) as client:
+        # trust_env=False: 避免继承 Windows 系统代理(IE/WinHTTP)导致 HTTPS TLS 握手失败
+        with httpx.Client(timeout=LLM_TIMEOUT, trust_env=False) as client:
             response = client.post(
                 url,
                 json=payload,

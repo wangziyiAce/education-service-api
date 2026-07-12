@@ -100,7 +100,7 @@ class ProfileRule(Base):
 
     # --- 主键 ---
     id: Mapped[int] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         primary_key=True,
         autoincrement=True,
         comment="主键",
@@ -251,7 +251,7 @@ class CustomerSource(Base):
 
     # --- 主键 ---
     id: Mapped[int] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         primary_key=True,
         autoincrement=True,
         comment="主键",
@@ -349,7 +349,7 @@ class CustomerSource(Base):
     # 谁上传/录入了这条客户信息。
     # 用于统计和数据追溯。
     operator_id: Mapped[Optional[int]] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         default=None,
         comment="操作人ID → sys_user（逻辑关联）",
     )
@@ -421,7 +421,7 @@ class CustomerProfile(Base):
 
     # --- 主键 ---
     id: Mapped[int] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         primary_key=True,
         autoincrement=True,
         comment="主键",
@@ -451,7 +451,7 @@ class CustomerProfile(Base):
     #   - 原始文件/文本是什么
     #   - 谁录入的
     source_id: Mapped[Optional[int]] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         default=None,
         comment="→ customer_source.id（逻辑关联）",
     )
@@ -538,7 +538,7 @@ class CustomerProfile(Base):
     # 谁触发了这次研判（可能是系统自动，也可能是人工手动研判）。
     # 可为 NULL，因为定时任务/自动触发时没有具体的操作人。
     evaluator_id: Mapped[Optional[int]] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         default=None,
         comment="研判人 → sys_user（逻辑关联）",
     )
@@ -622,7 +622,7 @@ class CrmLead(Base):
 
     # --- 主键 ---
     id: Mapped[int] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         primary_key=True,
         autoincrement=True,
         comment="主键",
@@ -701,7 +701,7 @@ class CrmLead(Base):
     # --- 关联客户画像 ID ---
     # 逻辑外键 → customer_profile.id，可选；用于打通"客户研判"与"CRM 跟进"两条链路。
     customer_profile_id: Mapped[Optional[int]] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         default=None,
         comment="关联客户画像ID",
     )
@@ -734,7 +734,7 @@ class CrmLead(Base):
     # 逻辑外键 → sys_user.id，不在数据库层面建 FOREIGN KEY，
     # 由应用层 CrmService 校验员工存在且 user_type='employee'。
     owner_employee_id: Mapped[int] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         nullable=False,
         comment="负责员工ID",
     )
@@ -833,7 +833,7 @@ class CrmFollowUp(Base):
 
     # --- 主键 ---
     id: Mapped[int] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         primary_key=True,
         autoincrement=True,
         comment="主键",
@@ -842,7 +842,7 @@ class CrmFollowUp(Base):
     # --- 客户 ID（逻辑关联 crm_lead）---
     # 逻辑外键 → crm_lead.id，由应用层 CrmService 校验客户是否存在。
     lead_id: Mapped[int] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         nullable=False,
         comment="客户ID（逻辑关联 crm_lead.id）",
     )
@@ -850,7 +850,7 @@ class CrmFollowUp(Base):
     # --- 跟进员工 ID（逻辑关联 sys_user）---
     # 逻辑外键 → sys_user.id，记录是谁做的这次跟进。
     employee_id: Mapped[int] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         nullable=False,
         comment="跟进员工ID → sys_user（逻辑关联）",
     )
@@ -955,7 +955,7 @@ class EmployeeDailyReport(Base):
 
     # --- 主键 ---
     id: Mapped[int] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         primary_key=True,
         autoincrement=True,
         comment="主键",
@@ -964,7 +964,7 @@ class EmployeeDailyReport(Base):
     # --- 员工 ID（逻辑关联 sys_user）---
     # 逻辑外键 → sys_user.id，由应用层 EmployeeService 校验员工存在。
     employee_id: Mapped[int] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         nullable=False,
         comment="员工ID → sys_user（逻辑关联）",
     )
@@ -1080,7 +1080,7 @@ class AssistantSession(Base):
 
     # --- 主键 ---
     id: Mapped[int] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         primary_key=True,
         autoincrement=True,
         comment="主键",
@@ -1095,7 +1095,7 @@ class AssistantSession(Base):
 
     # --- 员工 ID（逻辑关联 sys_user）---
     employee_id: Mapped[int] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         nullable=False,
         comment="发起员工 ID → sys_user（逻辑关联）",
     )
@@ -1127,9 +1127,10 @@ class AssistantSession(Base):
     # 表级约束
     # ========================================
     __table_args__ = (
-        Index("idx_employee_id", "employee_id"),
-        Index("idx_session_id", "session_id"),
-        Index("idx_status", "status"),
+        # 注：SQLite 索引名在数据库级必须全局唯一，故加 asess_ 前缀避免与其它表重名
+        Index("idx_asess_employee", "employee_id"),
+        Index("idx_asess_sid", "session_id"),
+        Index("idx_asess_status", "status"),
         {"comment": "智能助手会话表"},
     )
 
@@ -1161,7 +1162,7 @@ class AssistantMessage(Base):
 
     # --- 主键 ---
     id: Mapped[int] = mapped_column(
-        BIGINT(unsigned=True),
+        Integer().with_variant(BIGINT(unsigned=True), "mysql"),
         primary_key=True,
         autoincrement=True,
         comment="主键",
@@ -1232,10 +1233,11 @@ class AssistantMessage(Base):
     # 表级约束
     # ========================================
     __table_args__ = (
-        Index("idx_session_id", "session_id"),
-        Index("idx_role", "role"),
-        Index("idx_action_type", "action_type"),
-        Index("idx_create_time", "create_time"),
+        # 注：SQLite 索引名在数据库级必须全局唯一，故加 amsg_ 前缀避免与 assistant_session 的 idx_session_id 冲突
+        Index("idx_amsg_sid", "session_id"),
+        Index("idx_amsg_role", "role"),
+        Index("idx_amsg_action", "action_type"),
+        Index("idx_amsg_ctime", "create_time"),
         {"comment": "智能助手消息表"},
     )
 

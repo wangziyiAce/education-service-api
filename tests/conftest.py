@@ -12,7 +12,7 @@ os.environ["APP_DEBUG"] = "false"
 # 必须在导入 config 前设置 DATABASE_URL
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
-from config import settings
+import config as settings  # config 模块以属性方式导出所有配置项（无 settings 对象）
 from utils.database import Base, get_db
 from main import app
 
@@ -22,20 +22,41 @@ from main import app
 
 @pytest.fixture(scope="session")
 def engine():
-    """会话级 SQLite 内存引擎"""
+    """会话级 SQLite 内存引擎。
+
+    使用 StaticPool：让所有连接共享同一个内存库，
+    否则 SQLite ':memory:' 每连接隔离，db_session 看不到 create_all 建的表。
+    """
+    from sqlalchemy.pool import StaticPool
     return create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
         echo=False,
     )
 
 
+# 测试只依赖以下表，避免 student 模块中跨表重名索引（idx_status 等）
+# 在 SQLite 下建表失败（SQLite 索引名数据库级必须全局唯一，MySQL 表级允许重复）
+NEEDED_TABLES = [
+    "sys_role",
+    "sys_user",
+    "sys_organization",
+    "crm_lead",
+    "crm_follow_up",
+    "employee_daily_report",
+    "assistant_session",
+    "assistant_message",
+]
+
+
 @pytest.fixture(scope="session")
 def tables_created(engine):
-    """会话级建表（只执行一次）"""
-    Base.metadata.create_all(engine)
+    """会话级建表（只建测试所需表子集，只执行一次）"""
+    tables = [Base.metadata.tables[name] for name in NEEDED_TABLES if name in Base.metadata.tables]
+    Base.metadata.create_all(engine, tables=tables)
     yield
-    Base.metadata.drop_all(engine)
+    Base.metadata.drop_all(engine, tables=tables)
 
 
 @pytest.fixture
@@ -54,8 +75,14 @@ def db_session(engine, tables_created):
 
 
 @pytest.fixture
-def client(db_session):
-    """FastAPI TestClient，覆盖 get_db 依赖"""
+def client(db_session, monkeypatch):
+    """FastAPI TestClient，覆盖 get_db 依赖。
+
+    禁用 lifespan 中的 init_db()：测试建表由 tables_created fixture 负责，
+    避免 init_db 在独立内存库上建全部表（含 student 模块冲突索引）导致启动失败。
+    """
+    import main as _main
+    monkeypatch.setattr(_main, "init_db", lambda: None)
 
     def override_get_db():
         try:

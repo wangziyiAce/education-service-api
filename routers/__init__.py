@@ -52,15 +52,13 @@ def register_routers(app: FastAPI) -> None:
         tags=["客户研判"],
     )
 
+    # 注意: student / assistant / crm / employee / report 等模块
+    # 已在 main.py 中统一注册（含正确的 prefix），此处不再重复注册，
+    # 避免同一接口暴露到错误路径或出现重复端点。
+
     # ========================================
     # ★ 后续模块扩展示例（取消注释即可启用）
     # ========================================
-    # from routers.crm import router as crm_router
-    # app.include_router(crm_router, prefix="/api/v1", tags=["企业助手"])
-    #
-    # from routers.student import router as student_router
-    # app.include_router(student_router, prefix="/api/v1", tags=["学生助手"])
-    #
     # from routers.chat import router as chat_router
     # app.include_router(chat_router, prefix="/api/v1", tags=["客服Agent"])
     #

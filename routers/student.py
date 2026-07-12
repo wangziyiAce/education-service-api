@@ -138,6 +138,27 @@ def list_leaves(
     return _paginated(result["items"], result["total"], page, page_size)
 
 
+@router.get(
+    "/leave-requests/pending",
+    summary="班主任审批待办 [P1]",
+    description="""
+    班主任查询名下待审批的请假申请（status=pending）。
+
+    流程: 按 class_teacher_id 找出该班主任的学生 → 查这些学生的 pending 请假。
+    配合站内信（leave_submitted）使用，构成「提交→推送→待办→审批→回调」闭环。
+""",
+)
+def list_pending_leaves(
+    teacher_id: int = Query(..., gt=0, description="班主任ID → sys_user.id"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    svc = StudentService(db)
+    result = svc.list_pending_leaves_for_teacher(teacher_id, page, page_size)
+    return _paginated(result["items"], result["total"], page, page_size)
+
+
 # =========================================================================
 # 售后反馈
 # =========================================================================
@@ -191,14 +212,15 @@ def update_feedback(ticket_id: int, body: FeedbackUpdate, db: Session = Depends(
 
 @router.get("/feedback-tickets", summary="查询投诉列表 [P1]")
 def list_feedbacks(
-    student_id: int = Query(..., gt=0),
-    status: str = Query(None),
+    student_id: int = Query(None, gt=0, description="学生ID（学生查自己时传）"),
+    assignee_id: int = Query(None, gt=0, description="处理人ID（售后查待办时传）"),
+    status: str = Query(None, description="状态过滤: pending/processing/resolved/closed"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
     svc = StudentService(db)
-    result = svc.list_feedbacks(student_id, status, page, page_size)
+    result = svc.list_feedbacks(student_id, assignee_id, status, page, page_size)
     return _paginated(result["items"], result["total"], page, page_size)
 
 

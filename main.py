@@ -171,14 +171,12 @@ from routers import register_routers
 register_routers(app)
 
 # 企业助手 / 学生助手 / 智能报告 / 客服Agent（队友模块）
-from routers.assistant import router as assistant_router
 from routers.report import router as report_router
 from routers import student
 from routers import student_chat
 
 app.include_router(crm_router,      prefix="/api/v1/crm",      tags=["企业助手"])
 app.include_router(employee_router, prefix="/api/v1/employee", tags=["员工日报"])
-app.include_router(assistant_router, prefix="/api/v1",          tags=["智能助手"])
 app.include_router(student.router, prefix="/api/v1/student", tags=["学生智能助手"])
 app.include_router(student_chat.router, prefix="/api/v1")
 app.include_router(report_router,    prefix="/api/v1/report",  tags=["智能报告"])

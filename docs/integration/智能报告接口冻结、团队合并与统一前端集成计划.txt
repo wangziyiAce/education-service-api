@@ -1,0 +1,190 @@
+# 智能报告接口冻结、团队合并与统一前端集成计划
+
+## Summary
+
+目标是在明天完成可演示的全系统集成版本：
+
+1. 以 `master` 的智能报告代码为唯一基线。
+2. 先冻结并验证智能报告接口，完成真实 MySQL、真实 DeepSeek、现有报告前端的闭环。
+3. 再逐步合并和检查团队其他模块。
+4. 最后通过统一前端展示各角色入口和全部现有业务版块。
+5. 智能报告不再进入 Iteration 4；原路线图阶段 4、5全部暂停，不做生产封装和上线。
+
+## Implementation Changes
+
+### 阶段 0：仓库基线整理
+
+- 备份 Berlin 原分支和两处未提交改动。
+- 让本地及远程 Berlin 使用 `--force-with-lease` 精确指向 `master`。
+- 确认 `master`、`Berlin`、`origin/master`、`origin/Berlin` 提交哈希一致。
+- 后续所有智能报告和统一前端工作直接以 `master` 为准。
+- 每个集成步骤独立提交；禁止覆盖公共文件、强制清理工作区或回迁 Berlin 的旧报告代码。
+
+### 阶段 1：智能报告接口冻结与模块自验
+
+冻结以下接口组：
+
+- 报告类型、生成、列表、详情、状态和失败重试。
+- 报告行动项与报告计划。
+- 智能报告助手 `POST /api/v1/reports/assistant/messages`。
+- Iteration 3 的周期比较、受控跨报告分析、Evidence、MetricTrace、DataQuality 和因果保护。
+- 报告数据维护接口。
+
+完成最小交付物：
+
+- 从真实 FastAPI 应用导出 OpenAPI，不手写接口结构。
+- 建立后端路由、Pydantic Schema、OpenAPI、前端 TypeScript 类型和 API 调用的契约检查。
+- 输出一份精简的前端联调说明，记录路径、请求字段、响应字段、权限、状态码、异步轮询和错误处理。
+- 记录智能报告需要的数据库表、Migration、Seed、环境变量和公共文件注册项。
+- 不再制作原计划中九份重复文档，以 OpenAPI、契约测试、联调说明和交付清单为核心。
+
+真实 LLM 配置统一使用报告模块实际读取的变量：
+
+- `REPORT_AI_MODE=llm`
+- `REPORT_LLM_PROVIDER=deepseek`
+- `REPORT_LLM_BASE_URL=https://api.deepseek.com`
+- `REPORT_LLM_MODEL=deepseek-v4-pro`
+- `REPORT_LLM_API_KEY` 仅保存在本地 `.env`
+
+用户提供的密钥不得进入代码、测试数据、日志、文档或 Git；演示结束后轮换。
+
+智能报告独立验收必须跑通：
+
+```text
+登录
+→ 获取报告类型
+→ 提交报告生成请求
+→ 返回异步任务
+→ 查询报告状态
+→ DeepSeek 真实生成
+→ 查看报告详情
+→ 智能助手追问
+→ 展示 Evidence/DataQuality
+→ 展示周期比较或受控跨报告结果
+```
+
+只有上述闭环通过，才能进入团队模块集成。
+
+### 阶段 2：团队代码逐模块集成
+
+由于 Iteration 3 已经进入 `master`，不再重复合并旧 Iteration 3 分支。
+
+按真实依赖逐个检查和集成：
+
+```text
+公共基础设施与数据库
+→ 用户、认证和权限
+→ CRM/客户研判
+→ 客服 Agent
+→ 学生服务
+→ 企业工作台
+→ 智能报告
+→ 统一前端
+```
+
+每次只处理一个模块：
+
+```text
+确认来源提交
+→ 检查差异
+→ 解决当前模块冲突
+→ 手工合并公共文件注册项
+→ 检查数据库与 Migration
+→ 检查 OpenAPI
+→ 运行该模块测试
+→ 运行全量回归
+→ 独立提交
+→ 再处理下一个模块
+```
+
+公共文件不得被任何模块整体覆盖，重点保护：
+
+- `main.py`
+- `config.py`
+- `routers/__init__.py`
+- `models/__init__.py`
+- `requirements.txt`
+- `.env.example`
+- 前端 Router、菜单、API Client 和 operation catalog
+
+智能报告目录如果与其他来源冲突，以 `master` 当前实现及其测试为准。
+
+### 阶段 3：统一前端全模块展示
+
+复用 `master` 已有 React/Vite 前端，不重新设计一套页面。
+
+统一前端至少展示：
+
+- 登录与角色跳转。
+- 管理员/经理 Dashboard。
+- 用户管理。
+- 客户研判。
+- 客服 Agent。
+- 学生助手。
+- 企业工作台。
+- 报告列表、生成、详情、行动项、计划和数据维护。
+- 智能报告助手与 Iteration 3 分析结果。
+- API 诊断工作台。
+
+逐项统一：
+
+- FastAPI Base URL 和 `/api/v1` 前缀。
+- JWT Token 注入及 401 重新登录。
+- 角色菜单、前端路由和后端权限。
+- 前端 TypeScript 类型与真实响应。
+- 加载、空数据、403、404、422、500、503 状态。
+- 页面入口、侧边栏菜单、深层 URL 和刷新行为。
+- 所有页面使用真实后端接口；固定演示数据只用于数据库 Seed，不在组件中伪造响应。
+
+## Test Plan
+
+### 智能报告专项
+
+- 真实 MySQL 数据准备与 Migration 顺序正确。
+- 真实 DeepSeek 调用成功，确认返回内容不是本地降级结果。
+- 报告生成返回正确异步状态并可轮询完成。
+- 相同幂等键不重复创建任务。
+- 报告详情、重试、行动项、计划和数据维护接口可用。
+- 多轮追问保留服务端返回的上下文。
+- Evidence、DataQuality、Comparison、RelationshipSections 正常展示。
+- 不支持的跨报告组合被拒绝，不能生成无证据因果结论。
+
+### 全系统回归
+
+- 运行智能报告全部后端测试。
+- 运行后端全量测试，两轮结果均为 `0 failed`。
+- 导出并检查 OpenAPI：路径存在、operationId 唯一、Schema 可解析。
+- 运行前端 `npm run test:all`、`npm run build` 和必要的 lint。
+- 使用管理员、经理、员工、组长、学生账号逐角色检查菜单和页面权限。
+- 对所有业务页面执行一次真实 API Smoke Test。
+- 检查 `.env` 未被跟踪、密钥未进入 diff、工作区最终干净。
+
+## Completion Criteria
+
+明天的交付只有同时满足以下条件才算完成：
+
+- 智能报告真实数据库与真实 DeepSeek 链路通过。
+- 智能报告接口、OpenAPI、前端类型和页面调用一致。
+- 团队已有模块全部注册到统一 FastAPI 应用。
+- 所有现有业务版块均有可访问的统一前端入口。
+- 各角色看到正确菜单，越权访问返回 403。
+- 后端全量测试、前端测试和生产构建通过。
+- `master` 工作区干净，提交可追踪。
+- Berlin 已安全备份并与 master 精确对齐。
+
+## Explicitly Deferred
+
+本轮不执行：
+
+- 智能报告 Iteration 4。
+- RAG、多 Agent、NL2SQL、Redis、Celery和会话持久化扩展。
+- 阶段 4 的 Docker、Nginx、Production Compose 和生产安全封装。
+- 阶段 5 的预发布、备份恢复、Release Tag 和生产部署。
+- 与明天统一前端演示无关的架构重构或视觉重做。
+
+## Assumptions
+
+- `master` 是团队当前唯一集成基线。
+- 用户已确认直接在 `master` 集成，但每一步仍需先备份、验证并独立提交。
+- 明天的目标是开发环境中的全模块真实前后端演示，不是生产上线。
+- 客服 Agent 保持 Dify + Python；智能报告及其他模块保持纯 Python，不引入 Dify。

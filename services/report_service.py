@@ -20,8 +20,8 @@ from schemas.crm import (
 )
 from services.crm_service import EmployeeService, ParamError
 
-# 复用智能助手模块已封装好的 LLM 调用能力（模块级函数），避免重复实现
-from services.assistant_service import (
+# 复用 crm_service 已封装好的 LLM 调用能力（模块级函数），避免重复实现
+from services.crm_service import (
     _call_llm,
     _extract_json,
     is_llm_available,

@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>{{ title }}</title></head>
+<body>
+  <!-- 申请风险报告模板：展示临近截止、逾期、材料缺失和负责人行动清单。 -->
+  <h1>{{ title }}</h1>
+  <p>报告类型：{{ report_label }}｜周期：{{ period }}</p>
+  <h2>摘要</h2><div>{{ summary }}</div>
+  <h2>核心指标</h2><pre>{{ metrics_json }}</pre>
+  <h2>解释说明</h2><div>{{ explanation }}</div>
+  <h2>完整结构化内容</h2><pre>{{ content_json }}</pre>
+  <h2>数据质量</h2><pre>{{ data_quality_json }}</pre>
+</body>
+</html>

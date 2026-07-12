@@ -25,6 +25,7 @@ class LeadCreate(BaseModel):
     customer_profile_id: Optional[int] = Field(None, examples=[1])
     remark: Optional[str] = Field(None, examples=["高意向客户，需尽快跟进"])
     owner_employee_id: int = Field(..., examples=[2])
+    raw_content: Optional[str] = Field(None, description="自然语言描述（可选），后端调用大模型抽取结构化字段回填")
 
 
 class LeadUpdate(BaseModel):
@@ -58,7 +59,7 @@ class LeadResponse(BaseModel):
     """客户响应模型"""
     id: int
     customer_name: str
-    contact_info: str
+    contact_info: Optional[str] = None
     gender: Optional[str] = None
     age: Optional[int] = None
     education_level: Optional[str] = None
@@ -75,6 +76,7 @@ class LeadResponse(BaseModel):
     last_contact_time: Optional[datetime] = None
     create_time: Optional[datetime] = None
     update_time: Optional[datetime] = None
+    ai_insight: Optional[str] = Field(None, description="AI 客户洞察（调用大模型生成，不可用时为空）")
 
     model_config = {"from_attributes": True}
     # from_attributes=True：允许 model_validate(ORM对象) 直接从 ORM 属性读取数据
@@ -98,7 +100,8 @@ class FollowUpCreate(BaseModel):
         ..., description="跟进方式：phone/wechat/meeting/email/other",
         examples=["wechat"])
     # Literal 限制只能选这5种跟进方式，FastAPI 自动校验
-    content: str = Field(..., examples=["客户确认意向，下周面谈"])
+    content: Optional[str] = Field(None, description="跟进内容；可与 raw_content 二选一，优先用 AI 结构化结果")
+    raw_content: Optional[str] = Field(None, description="口述/自然语言跟进内容，后端调用大模型结构化")
     next_plan: Optional[str] = Field(None, max_length=255, examples=["安排线下咨询"])
 
 
@@ -107,9 +110,10 @@ class FollowUpResponse(BaseModel):
     id: int
     lead_id: int
     employee_id: int
-    follow_type: str
+    follow_type: Optional[str] = None
     content: str
     next_plan: Optional[str] = None
+    ai_next_plan: Optional[str] = Field(None, description="AI 建议的下一步计划（调用大模型生成）")
     create_time: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
@@ -288,8 +292,8 @@ class AnalyzeRequest(BaseModel):
     rule_id: Optional[int] = Field(None, description="指定规则 ID（不填则自动按优先级匹配）")
 
 
-# ==================== 智能助手模块 ====================
-# 以下 Schema 供 services/assistant_service.py 和 routers/assistant.py 使用
+# ==================== 企业助手 - 智能对话模块 ====================
+# 以下 Schema 供 services/crm_service.py 和 routers/crm.py 使用
 # 对应 models/crm.py 中的 AssistantSession / AssistantMessage
 
 class AssistantChatRequest(BaseModel):

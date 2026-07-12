@@ -107,10 +107,12 @@ class StudentService:
             status="pending",
         )
         self.db.add(leave)
+        self.db.flush()  # 先取 id，便于通知携带 related_id
         # 通知班主任（teacher 也是 sys_user，复用 student_notification 表）
         if info.class_teacher_id:
             self._push_notification(info.class_teacher_id, "leave_submitted",
-                "新的请假申请", f"学生提交了请假申请，等待审批")
+                "新的请假申请", f"学生提交了请假申请，等待审批",
+                related_type="leave", related_id=leave.id)
         self._commit()
         self.db.refresh(leave)
         return leave
@@ -208,6 +210,26 @@ class StudentService:
             page, page_size,
         )
 
+    def list_pending_leaves_for_teacher(
+        self, teacher_id: int, page: int = 1, page_size: int = 20
+    ) -> dict:
+        """班主任审批待办 — 查该班主任名下、状态为 pending 的请假申请"""
+        student_ids = [r[0] for r in self.db.query(StudentInfo.user_id).filter(
+            StudentInfo.class_teacher_id == teacher_id,
+            StudentInfo.status == "active",
+        ).all()]
+        if not student_ids:
+            return {"total": 0, "items": []}
+        q = self.db.query(StudentAdminService).filter(
+            StudentAdminService.service_type == "leave",
+            StudentAdminService.student_id.in_(student_ids),
+            StudentAdminService.status == "pending",
+        )
+        total = q.count()
+        items = q.order_by(StudentAdminService.create_time.desc()) \
+                  .offset((page - 1) * page_size).limit(page_size).all()
+        return {"total": total, "items": items}
+
     # =========================================================================
     # 售后反馈
     # =========================================================================
@@ -235,6 +257,24 @@ class StudentService:
             priority=priority,
         )
         self.db.add(ticket)
+        self.db.flush()  # 先取 id，便于通知携带 related_id
+
+        # 推送班主任/售后（站内信）— 闭环关键：学生一提交，处理方立即收到提醒
+        _TICKET_TYPE_LABEL = {
+            "complaint": "投诉", "suggestion": "建议", "consult": "咨询",
+        }
+        student_info = self.db.query(StudentInfo).filter(
+            StudentInfo.user_id == data.student_id,
+        ).first()
+        if student_info and student_info.class_teacher_id:
+            self._push_notification(
+                student_info.class_teacher_id, "feedback_submitted",
+                "新的学生反馈待处理",
+                f"学生提交了{_TICKET_TYPE_LABEL.get(data.ticket_type, '反馈')}工单"
+                f"（{ticket.title or ticket.content[:20]}），请及时处理。",
+                related_type="feedback", related_id=ticket.id,
+            )
+
         self._commit()
         self.db.refresh(ticket)
         return ticket
@@ -283,14 +323,17 @@ class StudentService:
         return ticket
 
     def list_feedbacks(
-        self, student_id: int, status: Optional[str] = None,
+        self, student_id: Optional[int] = None, assignee_id: Optional[int] = None,
+        status: Optional[str] = None,
         page: int = 1, page_size: int = 20
     ) -> dict:
+        q = self.db.query(StudentFeedbackTicket)
+        if student_id is not None:
+            q = q.filter(StudentFeedbackTicket.student_id == student_id)
+        if assignee_id is not None:
+            q = q.filter(StudentFeedbackTicket.assignee_id == assignee_id)
         return self._paginate(
-            self.db.query(StudentFeedbackTicket).filter(
-                StudentFeedbackTicket.student_id == student_id,
-            ),
-            status, StudentFeedbackTicket.status, StudentFeedbackTicket.create_time,
+            q, status, StudentFeedbackTicket.status, StudentFeedbackTicket.create_time,
             page, page_size,
         )
 
