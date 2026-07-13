@@ -15,7 +15,7 @@ os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 # 需要验证 LLM 的用例会在自身 fixture 中显式开启并注入 Mock。
 os.environ["REPORT_ASSISTANT_LLM_ENABLED"] = "false"
 
-from config import settings
+import config as settings  # config 模块以属性方式导出所有配置项（无 settings 对象）
 from utils.database import Base, get_db
 from main import app
 
@@ -44,20 +44,53 @@ _normalize_sqlite_index_names()
 
 @pytest.fixture(scope="session")
 def engine():
-    """会话级 SQLite 内存引擎"""
+    """会话级 SQLite 内存引擎。
+
+    使用 StaticPool：让所有连接共享同一个内存库，
+    否则 SQLite ':memory:' 每连接隔离，db_session 看不到 create_all 建的表。
+    """
+    from sqlalchemy.pool import StaticPool
     return create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
         echo=False,
     )
 
 
+# 测试建表白名单：建全部非 student 模块的表。
+# 为什么排除 student 模块：student 模块多张表使用了跨表重名索引
+# （如 idx_status），SQLite 要求索引名在数据库级全局唯一，而 MySQL 只在
+# 表级允许重复。若把 student 表也建进来，SQLite 会在 create_all 阶段因
+# 索引名冲突直接报错，导致整个测试会话建表失败。
+# 排除方式：用表名前缀/精确名单过滤，新增非 student 模块表时无需手动维护。
+STUDENT_TABLES = {
+    "academic_deadline",
+    "application_progress",
+    "student_admin_service",
+    "student_feedback_ticket",
+    "student_info",
+    "student_intent_tag",
+    "student_notification",
+    "student_psych_alert",
+    "student_psych_profile",
+    "student_psych_record",
+    "student_score",
+}
+
+NEEDED_TABLES = [
+    name for name in Base.metadata.tables.keys()
+    if name not in STUDENT_TABLES
+]
+
+
 @pytest.fixture(scope="session")
 def tables_created(engine):
-    """会话级建表（只执行一次）"""
-    Base.metadata.create_all(engine)
+    """会话级建表（只建测试所需表子集，只执行一次）"""
+    tables = [Base.metadata.tables[name] for name in NEEDED_TABLES if name in Base.metadata.tables]
+    Base.metadata.create_all(engine, tables=tables)
     yield
-    Base.metadata.drop_all(engine)
+    Base.metadata.drop_all(engine, tables=tables)
 
 
 @pytest.fixture
@@ -76,8 +109,14 @@ def db_session(engine, tables_created):
 
 
 @pytest.fixture
-def client(db_session):
-    """FastAPI TestClient，覆盖 get_db 依赖"""
+def client(db_session, monkeypatch):
+    """FastAPI TestClient，覆盖 get_db 依赖。
+
+    禁用 lifespan 中的 init_db()：测试建表由 tables_created fixture 负责，
+    避免 init_db 在独立内存库上建全部表（含 student 模块冲突索引）导致启动失败。
+    """
+    import main as _main
+    monkeypatch.setattr(_main, "init_db", lambda: None)
 
     def override_get_db():
         try:

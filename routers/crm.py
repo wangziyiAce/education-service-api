@@ -32,11 +32,17 @@ from sqlalchemy.orm import Session
 from schemas.crm import (
     LeadCreate, LeadUpdate, LeadStatusUpdate, LeadResponse,
     LeadListResponse, FollowUpCreate, FollowUpResponse,
-    DailyReportCreate, DailyReportResponse, DailyReportSummaryResponse,
+    DailyReportCreate, DailyReportResponse, DailyReportManagementSummary,
+    AssistantChatRequest, AssistantChatResponse,
+    AssistantMessageResponse, AssistantSessionResponse,
 )
 from services.crm_service import (
     CrmService, EmployeeService, NotFoundError,
 )
+# AssistantService 已独立到 services.assistant_service（避免与 crm_service 形成循环导入）
+from services.assistant_service import AssistantService
+from models.common import get_current_user
+from models.user import SysUser
 from utils.database import get_db
 
 crm_router = APIRouter()
@@ -45,10 +51,14 @@ employee_router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def success_response(data, message: str = "success", code: int = 200):
-    """统一成功响应格式，返回 JSONResponse"""
+def success_response(data, message: str = "success", code: int = 0):
+    """统一成功响应格式，返回 JSONResponse。
+
+    业务码 code 默认 0（成功），HTTP 状态码固定 200，
+    与全局 models.common.success_response 约定一致（API 规范 V1.2：成功 code=0）。
+    """
     return JSONResponse(
-        status_code=code,
+        status_code=200,
         content=jsonable_encoder({"code": code, "message": message, "data": data}),
     )
 
@@ -86,6 +96,7 @@ def list_leads(
     keyword: Optional[str] = Query(None, description="按姓名/联系方式模糊搜索"),
     create_time_start: Optional[date] = Query(None, description="创建时间起始"),
     create_time_end: Optional[date] = Query(None, description="创建时间截止"),
+    ai_summary: bool = Query(False, description="是否返回 LLM 生成的列表摘要"),
     page: int = Query(1, ge=1),
     # ge=1：页码最小为1，FastAPI 自动校验，不合规返回 422
     page_size: int = Query(20, ge=1, le=100),
@@ -102,7 +113,7 @@ def list_leads(
     - 管理员：可查看全部客户
     （当前版本暂未实现完整权限过滤，通过 owner_employee_id 参数自行筛选）
 
-    **Dify 白名单：** 此接口在白名单中，Dify 可通过 Service Token 调用。
+    **LLM：** 传 ?ai_summary=true 可由大模型生成整体情况摘要（不可用时忽略）。
     """
     logger.info("GET /api/v1/crm/leads status=%s owner=%s keyword=%s page=%d",
                 status, owner_employee_id, keyword, page)
@@ -116,7 +127,12 @@ def list_leads(
         page=page,
         page_size=page_size,
     )
-    return success_response(data=result.model_dump())
+    data = result.model_dump()
+    if ai_summary:
+        summary = service.summarize_leads(result)
+        if summary:
+            data["ai_summary"] = summary
+    return success_response(data=data)
 
 
 @crm_router.get("/leads/{lead_id}", summary="查询单个客户详情")
@@ -127,7 +143,11 @@ def get_lead(lead_id: int, db: Session = Depends(get_db)):
     if not lead:
         raise NotFoundError("客户不存在")
     # 抛出 NotFoundError → 被 biz_error_handler 捕获 → 返回 404 + JSON 错误体
-    return success_response(data=LeadResponse.model_validate(lead).model_dump())
+    data = LeadResponse.model_validate(lead).model_dump()
+    insight = service.generate_lead_insight(lead_id)
+    if insight:
+        data["ai_insight"] = insight
+    return success_response(data=data)
 
 
 @crm_router.put("/leads/{lead_id}", summary="更新客户信息")
@@ -161,10 +181,11 @@ def update_lead_status(lead_id: int, data: LeadStatusUpdate,
     service = CrmService(db)
     lead = service.update_lead_status(lead_id, data)
     # Service 层包含完整的状态机校验 + 乐观锁并发控制
-    return success_response(
-        data=LeadResponse.model_validate(lead).model_dump(),
-        message="状态更新成功",
-    )
+    data_out = LeadResponse.model_validate(lead).model_dump()
+    suggestion = service.generate_status_suggestion(lead, data.status)
+    if suggestion:
+        data_out["ai_suggestion"] = suggestion
+    return success_response(data=data_out, message="状态更新成功")
 
 
 # ==================== 跟进记录 ====================
@@ -179,32 +200,40 @@ def create_follow_up(lead_id: int, data: FollowUpCreate,
 
     **业务规则：**
     - lead_id 对应的 crm_lead 记录必须存在（应用层逻辑外键校验）
-    - content 为必填
+    - content 与 raw_content 二选一：传 raw_content 时由大模型结构化生成 content，
+      并自动建议 next_plan（前端未传时）
     - 同步更新 crm_lead.last_contact_time 和 update_time
     """
     logger.info("POST /api/v1/crm/leads/%d/follow-ups type=%s employee=%d",
                 lead_id, data.follow_type, data.employee_id)
     service = CrmService(db)
-    follow_up = service.create_follow_up(lead_id, data)
-    return success_response(
-        data=FollowUpResponse.model_validate(follow_up).model_dump(),
-        message="跟进记录已保存",
-    )
+    follow_up, ai_next_plan = service.create_follow_up(lead_id, data)
+    data_out = FollowUpResponse.model_validate(follow_up).model_dump()
+    if ai_next_plan:
+        data_out["ai_next_plan"] = ai_next_plan
+    return success_response(data=data_out, message="跟进记录已保存")
 
 
 @crm_router.get("/leads/{lead_id}/follow-ups",
                  summary="查询跟进历史")
-def list_follow_ups(lead_id: int, db: Session = Depends(get_db)):
+def list_follow_ups(
+    lead_id: int,
+    ai_summary: bool = Query(False, description="是否返回 LLM 生成的跟进历史摘要"),
+    db: Session = Depends(get_db),
+):
     logger.info("GET /api/v1/crm/leads/%d/follow-ups", lead_id)
     service = CrmService(db)
     if not service.get_lead(lead_id):
         raise NotFoundError("客户不存在")
     # 先校验客户存在，再查跟进记录（避免对不存在的客户返回空数组）
     follow_ups = service.list_follow_ups(lead_id)
-    return success_response(
-        data=[FollowUpResponse.model_validate(f).model_dump() for f in follow_ups]
-        # 列表推导：每条 ORM 记录转为 Pydantic Schema → dict
-    )
+    items = [FollowUpResponse.model_validate(f).model_dump() for f in follow_ups]
+    # 列表推导：每条 ORM 记录转为 Pydantic Schema → dict
+    if ai_summary:
+        summary = service.summarize_follow_ups(lead_id)
+        if summary:
+            return success_response(data={"items": items, "ai_summary": summary})
+    return success_response(data=items)
 
 
 # ==================== 员工日报 ====================
@@ -237,6 +266,7 @@ def list_daily_reports(
     employee_id: Optional[int] = Query(None, description="员工ID"),
     start_date: Optional[date] = Query(None, description="起始日期"),
     end_date: Optional[date] = Query(None, description="截止日期"),
+    ai_summary: bool = Query(False, description="是否返回 LLM 生成的日报摘要"),
     db: Session = Depends(get_db),
 ):
     logger.info("GET /api/v1/employee/daily-reports employee=%d",
@@ -247,9 +277,12 @@ def list_daily_reports(
         start_date=start_date,
         end_date=end_date,
     )
-    return success_response(
-        data=[DailyReportResponse.model_validate(r).model_dump() for r in reports]
-    )
+    items = [DailyReportResponse.model_validate(r).model_dump() for r in reports]
+    if ai_summary:
+        summary = service.summarize_reports(reports)
+        if summary:
+            return success_response(data={"items": items, "ai_summary": summary})
+    return success_response(data=items)
 
 
 # ⚠️ /summary 必须在 /{report_id} 之前定义！
@@ -275,4 +308,63 @@ def get_daily_report(report_id: int, db: Session = Depends(get_db)):
     if not report:
         raise NotFoundError("日报不存在")
     # router 层做"存在性判断 → 抛异常"，service 层只负责数据查询
-    return success_response(data=DailyReportResponse.model_validate(report).model_dump())
+    data = DailyReportResponse.model_validate(report).model_dump()
+    brief = service.generate_report_brief(report_id)
+    if brief:
+        data["ai_brief"] = brief
+    return success_response(data=data)
+
+
+# ==================== 企业助手 - 智能对话 ====================
+
+@crm_router.post("/assistant/chat", summary="智能助手对话")
+def assistant_chat(
+    request: AssistantChatRequest,
+    current_user: SysUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    与智能助手对话（自然语言 → NL2SQL 查询 / NL2API 操作 / 闲聊）。
+
+    **意图类型：**
+    - sql：查询数据，如"有多少个联系中的客户"
+    - api：执行操作，如"帮我录入新客户王五"
+    - text：闲聊
+
+    **首次对话：** 不传 session_id，后端自动创建新会话
+    **多轮对话：** 传入之前返回的 session_id，保持上下文
+    """
+    service = AssistantService(db)
+    response = service.chat(request, current_user.id)
+    return {"code": 0, "message": "success", "data": response.model_dump()}
+
+
+@crm_router.get("/assistant/sessions", summary="智能助手会话列表")
+def assistant_sessions(
+    current_user: SysUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """查询当前员工的智能助手会话列表。"""
+    service = AssistantService(db)
+    sessions = service.list_sessions(current_user.id)
+    return {
+        "code": 0,
+        "message": "success",
+        "data": {"items": [s.model_dump() for s in sessions]},
+    }
+
+
+@crm_router.get("/assistant/sessions/{session_id}/messages", summary="智能助手会话历史")
+def assistant_messages(
+    session_id: str,
+    current_user: SysUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """查询某个会话的消息历史记录。"""
+    service = AssistantService(db)
+    messages = service.list_messages(session_id, current_user.id)
+    return {
+        "code": 0,
+        "message": "success",
+        "data": {"items": [m.model_dump() for m in messages]},
+    }
